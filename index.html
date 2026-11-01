@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#f6f3ea">
+<title>Handschrift</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header id="toolbar">
+  <button id="btnNotes" class="tb" title="Notizen">☰</button>
+  <span id="noteTitle" class="title">Notiz</span>
+  <div class="group">
+    <button data-tool="pen" class="tb tool active" title="Stift">✎</button>
+    <button data-tool="eraser" class="tb tool" title="Radierer">⌫</button>
+    <button data-tool="text" class="tb tool" title="Text in Handschrift einfügen">T<small>✍</small></button>
+  </div>
+  <div class="group">
+    <button id="btnUndo" class="tb" title="Rückgängig">↶</button>
+    <button id="btnRedo" class="tb" title="Wiederholen">↷</button>
+  </div>
+  <div class="group" id="colors">
+    <button class="swatch active" data-color="#1b2a4a" style="--c:#1b2a4a" title="Dunkelblau"></button>
+    <button class="swatch" data-color="#111111" style="--c:#111111" title="Schwarz"></button>
+    <button class="swatch" data-color="#1d4fd8" style="--c:#1d4fd8" title="Blau"></button>
+    <button class="swatch" data-color="#c0262d" style="--c:#c0262d" title="Rot"></button>
+    <button class="swatch" data-color="#1f7a3a" style="--c:#1f7a3a" title="Grün"></button>
+  </div>
+  <select id="penWidth" class="tb" title="Stiftstärke">
+    <option value="1.4">fein</option>
+    <option value="2.1" selected>mittel</option>
+    <option value="3.0">dick</option>
+  </select>
+  <div class="spacer"></div>
+  <button id="btnHand" class="tb wide" title="Meine Handschrift">✍ Meine Handschrift</button>
+  <button id="btnExport" class="tb" title="Als Bild exportieren">⇪</button>
+  <button id="btnSettings" class="tb" title="Einstellungen">⚙</button>
+</header>
+
+<main id="stage">
+  <canvas id="page"></canvas>
+  <div id="status" hidden></div>
+</main>
+
+<!-- Text-Eingabe für Handschrift -->
+<div id="textPanel" class="panel" hidden>
+  <textarea id="textInput" rows="3" placeholder="Text eintippen – er erscheint in deiner Handschrift an der markierten Stelle"></textarea>
+  <div class="row">
+    <label class="slider">Sorgfalt
+      <input id="bias" type="range" min="0" max="1.6" step="0.05" value="0.8">
+    </label>
+    <span id="textWarn" class="warn"></span>
+    <div class="spacer"></div>
+    <button id="textCancel" class="btn">Abbrechen</button>
+    <button id="textGo" class="btn primary">In Handschrift schreiben</button>
+  </div>
+</div>
+
+<!-- Notizenliste -->
+<aside id="drawer" hidden>
+  <div class="drawer-head">
+    <b>Notizen</b>
+    <button id="btnNewNote" class="btn primary">+ Neue Notiz</button>
+  </div>
+  <ul id="noteList"></ul>
+</aside>
+
+<!-- Handschrift lernen -->
+<div id="handModal" class="modal" hidden>
+  <div class="modal-box">
+    <div class="modal-head">
+      <h2>Meine Handschrift</h2>
+      <button id="handClose" class="btn">Fertig</button>
+    </div>
+    <p class="hint">Schreib den Satz <b>in einer Zeile auf die Linie</b>, ganz normal, so wie du sonst schreibst. Die KI lernt daraus Form, Neigung, Größe und Verbindungen deiner Buchstaben. 3–5 Sätze ergeben das beste Ergebnis.</p>
+    <div class="row">
+      <label class="grow">Geschriebener Text:
+        <input id="sampleText" type="text" maxlength="70">
+      </label>
+      <button id="sampleNext" class="btn" title="Anderen Satz vorschlagen">↻ anderer Satz</button>
+    </div>
+    <canvas id="pad"></canvas>
+    <div class="row">
+      <button id="padClear" class="btn">Löschen</button>
+      <button id="padUndo" class="btn">↶</button>
+      <div class="spacer"></div>
+      <button id="padSave" class="btn primary">Probe speichern</button>
+    </div>
+    <h3>Gespeicherte Proben <small id="sampleCount"></small></h3>
+    <div id="sampleList"></div>
+    <div class="row test-row">
+      <input id="testText" type="text" value="Hallo, das hier hat die KI in meiner Schrift geschrieben." class="grow">
+      <button id="testGo" class="btn primary">Testen</button>
+    </div>
+    <canvas id="testCanvas"></canvas>
+  </div>
+</div>
+
+<!-- Einstellungen -->
+<div id="settingsModal" class="modal" hidden>
+  <div class="modal-box small">
+    <div class="modal-head">
+      <h2>Einstellungen</h2>
+      <button id="settingsClose" class="btn">Fertig</button>
+    </div>
+    <label>Papier
+      <select id="setPaper">
+        <option value="lined">liniert</option>
+        <option value="grid">kariert</option>
+        <option value="plain">blanko</option>
+      </select>
+    </label>
+    <label>Zeilenabstand
+      <select id="setLine">
+        <option value="34">eng</option>
+        <option value="40" selected>normal</option>
+        <option value="48">weit</option>
+      </select>
+    </label>
+    <label class="check"><input id="setFinger" type="checkbox"> Mit dem Finger schreiben (sonst nur Stift, Finger scrollt)</label>
+    <label>Schrift-Stil für eingefügten Text
+      <select id="setStyle"></select>
+    </label>
+    <p class="hint small">Die KI läuft komplett auf diesem Gerät. Notizen und Schriftproben bleiben hier im Browser gespeichert.</p>
+    <p class="hint small">Modell: Graves-Handschriftsynthese, vortrainierte Gewichte aus sjvasquez/handwriting-synthesis (IAM-Online-Daten).</p>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script src="ink.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
