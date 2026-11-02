@@ -94,7 +94,7 @@
 
   function offsetsToCoords(offsets) {
     let x = 0, y = 0;
-    return offsets.map((o) => { x += o[0]; y += o[1]; return [x, y, o[2], o[3]]; });
+    return offsets.map((o) => { x += o[0]; y += o[1]; return [x, y, o[2], o[3], o[4]]; });
   }
 
   function median(a) {
@@ -179,12 +179,13 @@
   function presetSample(preset, lineSpacing) {
     const c = offsetsToCoords(preset.offsets);
     const ys = c.map((p) => p[1]).sort((a, b) => a - b);
-    // Schriftkörper (mittlere 50 % der Punkte) soll etwa ein Fünftel des Zeilenabstands hoch sein,
-    // dann bleiben Ober- und Unterlängen innerhalb der Zeile
-    const body = ys[Math.floor(ys.length * 0.75)] - ys[Math.floor(ys.length * 0.25)];
-    const unitPx = (lineSpacing * 0.21) / Math.max(body, 1e-3);
+    // Grundgröße über die Breite pro Zeichen (stabil über verschiedene Vorlagen, anders als die Höhe,
+    // die bei verbundenen Buchstaben zu groß gemessen wird): ein Zeichen = ein Fünftel Zeilenabstand
+    const body = bodyHeight(c.map((p) => [p[0], -p[1], p[2]]));
     const xs = c.map((p) => p[0]);
-    const charW = (Math.max(...xs) - Math.min(...xs)) * unitPx / preset.text.length;
+    const unitsPerChar = (Math.max(...xs) - Math.min(...xs)) / preset.text.length;
+    const unitPx = (lineSpacing * 0.2) / Math.max(unitsPerChar, 1e-3);
+    const charW = unitsPerChar * unitPx;
     return { text: preset.text, offsets: preset.offsets, unitPx, charW, bodyPx: body * unitPx, baselineDrop: null };
   }
 
@@ -194,21 +195,12 @@
   // Punkte, die noch zur Vorlage gehören (Zeichenindex < 0), weglassen und seltene Riesensprünge begrenzen.
   function cleanPoints(points) {
     const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-    // ganze Striche am Anfang verwerfen, die überwiegend noch zur Vorlage gehören
-    let start = 0;
-    while (start < points.length) {
-      let end = start;
-      while (end < points.length - 1 && points[end][2] !== 1) end++;
-      const n = end - start + 1;
-      const prior = points.slice(start, end + 1).filter((p) => p[3] < 0).length;
-      if (prior * 2 <= n) break;
-      start = end + 1;
-    }
+    const start = 0;   // Vorlagenreste verhindert die Prüfung der Vorlagen und die Lesbarkeits-Prüfung
     return points.slice(start).map((p, i, a) => {
       const penUp = i > 0 && a[i - 1][2] === 1;
       return penUp
-        ? [clamp(p[0], -25, 30), clamp(p[1], -20, 20), p[2], p[3]]   // Ausreißer fängt die Lesbarkeits-Prüfung ab
-        : [clamp(p[0], -8, 8), clamp(p[1], -8, 8), p[2], p[3]];
+        ? [clamp(p[0], -25, 30), clamp(p[1], -20, 20), p[2], p[3], p[4]]   // Ausreißer fängt die Lesbarkeits-Prüfung ab
+        : [clamp(p[0], -8, 8), clamp(p[1], -8, 8), p[2], p[3], p[4]];
     });
   }
 
@@ -231,30 +223,72 @@
     return bottoms.length ? bottoms[bottoms.length >> 1] : 0;
   }
 
-  // Höhe des Schriftkörpers: mittlere 50 % aller Punkte (unabhängig von Ober-/Unterlängen-Anteil)
+  // Höhe des Schriftkörpers: Median der Strichhöhen. Die meisten Striche sind Kleinbuchstaben ohne
+  // Ober-/Unterlänge, daher kaum abhängig davon, welche Buchstaben im Stück vorkommen.
   function bodyHeight(pts) {
+    const ext = strokeExtents(pts);
+    const hs = ext.map((e) => e.h).filter((h) => h > 0).sort((a, b) => a - b);
+    if (hs.length >= 3) {
+      const big = hs.filter((h) => h > hs[hs.length - 1] * 0.15);   // Punkte/Häkchen ignorieren
+      return Math.max(1e-3, big[big.length >> 1]);
+    }
     const ys = pts.map((p) => p[1]).sort((a, b) => a - b);
     return Math.max(1e-3, ys[Math.floor(ys.length * 0.75)] - ys[Math.floor(ys.length * 0.25)]);
   }
 
-  function pointsToStrokes(points, sample, dots, origin, rng = Math.random) {
+  // Stücke einer Zeile vereinheitlichen (verändert pts): jedes Stück auf die Grundlinie des ersten
+  // setzen und einen natürlichen Wortabstand zum vorigen Stück herstellen.
+  function alignSegments(pts, gap) {
+    const groups = new Map();
+    pts.forEach((p, i) => { if (!groups.has(p[4])) groups.set(p[4], []); groups.get(p[4]).push(i); });
+    const keys = [...groups.keys()].sort((a, b) => a - b);
+    let target = null, prevMax = null;
+    for (const k of keys) {
+      const idx = groups.get(k);
+      const seg = () => idx.map((i) => pts[i]);
+      // Grundlinie (die Größe hält das Modell beim Weiterschreiben selbst)
+      const b = baselineOf(seg());
+      if (target == null) target = b;
+      // Wortabstand
+      let minX = Infinity, maxX = -Infinity;
+      for (const i of idx) { minX = Math.min(minX, pts[i][0]); maxX = Math.max(maxX, pts[i][0]); }
+      let dx = 0;
+      if (prevMax != null) {
+        const lo = prevMax + gap, hi = prevMax + 2 * gap;
+        if (minX < lo) dx = lo - minX; else if (minX > hi) dx = hi - minX;
+      }
+      for (const i of idx) { pts[i][0] += dx; pts[i][1] += target - b; }
+      prevMax = maxX + dx;
+    }
+  }
+
+  function pointsToStrokes(points, sample, dots, origin, rng = Math.random, nChars = 0) {
     if (!points.length) return { strokes: [], width: 0 };
     points = cleanPoints(points);
     if (!points.length) return { strokes: [], width: 0 };
     let coords = offsetsToCoords(points);
     const charOf = coords.map((p) => p[3]);
+    const segOf = coords.map((p) => p[4] || 0);
     coords = denoise(coords.map((p) => [p[0], p[1], p[2]]));
     // Bei kurzen Stücken ist die geschätzte Schräglage unzuverlässig: nur leicht gerade drehen,
     // damit nebeneinanderstehende Stücke nicht unterschiedlich kippen.
     coords = align(coords, 2.5);
     const s = sample.unitPx;
     // y umdrehen (Modell: y nach oben)
-    let pts = coords.map((p, i) => [p[0] * s, -p[1] * s, p[2], charOf[i]]);
+    let pts = coords.map((p, i) => [p[0] * s, -p[1] * s, p[2], charOf[i], segOf[i]]);
     const minX = Math.min(...pts.map((p) => p[0]));
-    // Größe angleichen: jedes Stück auf die Mittellängen-Höhe der Vorlage bringen
-    if (sample.bodyPx) {
-      const f = Math.min(1.35, Math.max(0.75, sample.bodyPx / bodyHeight(pts)));
-      pts = pts.map((p) => [minX + (p[0] - minX) * f, p[1] * f, p[2], p[3]]);
+    // Grundlinie und Wortabstände der Stücke angleichen
+    alignSegments(pts, (sample.charW || 11) * 0.8);
+    // Größe der ganzen Zeile über die Breite pro Zeichen an die Vorlage anpassen (über eine Zeile
+    // sehr stabil, anders als Höhenmaße, die von Ober-/Unterlängen und Verbindungen abhängen)
+    if (sample.charW && nChars) {
+      // robuste Breite: ohne die äußersten 3 % der Punkte (einzelne Ausreißer am Rand)
+      const xs = pts.map((p) => p[0]).sort((a, b) => a - b);
+      const x0 = xs[0];
+      const w = xs[Math.floor(xs.length * 0.97)] - xs[Math.floor(xs.length * 0.03)];
+      const f = Math.min(1.25, Math.max(0.8, (sample.charW * nChars * 0.94) / Math.max(1, w)));
+      const b = baselineOf(pts);
+      pts = pts.map((p) => [x0 + (p[0] - x0) * f, b + (p[1] - b) * f, p[2], p[3], p[4]]);
     }
     // Grundlinie: Median der tiefsten Punkte je Strich (die meisten Striche enden auf der Linie;
     // Unterlängen sind in der Minderheit). Robuster als ein Prozentwert aller Punkte.

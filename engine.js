@@ -221,7 +221,7 @@
   // Lesbarkeit grob prüfen: die Attention zeigt, an welchem Buchstaben das Modell gerade schreibt.
   // Übersprungene (kaum Punkte) oder verschmierte Buchstaben (sehr viele Punkte) und
   // abgebrochene Zeilen ergeben Fehlerpunkte; 0 = unauffällig.
-  function legibilityPenalty(points, text) {
+  function legibilityPenalty(points, text, ignorePrior = false) {
     const n = text.length;
     const cnt = new Array(n).fill(0);
     let maxCi = -1;
@@ -257,7 +257,7 @@
       if (y < yMin) yMin = y;
       if (y > yMax) yMax = y;
     }
-    if (prior > 8) bad += 2;
+    if (prior > 40 && !ignorePrior) bad += 2;   // mehr als ~1,5 Buchstaben noch aus der Vorlage
     bad += Math.min(wild, 3);
 
     // verrutschte Striche: Strich (nicht Punkt/Querstrich) schwebt klar über bzw. liegt unter der Grundlinie
@@ -281,35 +281,16 @@
 
   // mehrere Versuche, der lesbarste gewinnt (bricht ab, sobald einer unauffällig ist)
   Model.prototype.generateBest = function (text, opts = {}) {
-    const tries = opts.tries || 6;
+    const tries = opts.tries || 4;
     let best = null, bestPen = Infinity;
     for (let k = 0; k < tries; k++) {
       const pts = this.generate(text, opts);
-      const pen = legibilityPenalty(pts, text);
+      const pen = legibilityPenalty(pts, text, opts.continued);
       if (pen < bestPen) { best = pts; bestPen = pen; }
       if (pen === 0) break;
     }
     return best;
   };
-
-  // Striche am Anfang, die überwiegend noch zur Vorlage gehören, entfernen; ihre Verschiebung
-  // bleibt erhalten, damit der Rest an der richtigen Stelle steht
-  function dropResidue(pts) {
-    let start = 0;
-    while (start < pts.length) {
-      let end = start;
-      while (end < pts.length - 1 && pts[end][2] !== 1) end++;
-      const prior = pts.slice(start, end + 1).filter((p) => p[3] < 0).length;
-      if (prior * 2 <= end - start + 1) break;
-      start = end + 1;
-    }
-    if (start === 0) return pts;
-    const rest = pts.slice(start).map((p) => p.slice());
-    if (rest.length) {
-      for (let i = 0; i < start; i++) { rest[0][0] += pts[i][0]; rest[0][1] += pts[i][1]; }
-    }
-    return rest;
-  }
 
   // Eine Zeile aus mehreren kurzen Stücken: jedes Stück wird mit dem zuvor Geschriebenen als
   // Vorlage fortgesetzt. So bleiben Größe, Grundlinie und Wortabstand durchgehend gleich, und
@@ -321,9 +302,11 @@
     let ciOff = 0;
     for (let k = 0; k < segments.length; k++) {
       const seg = segments[k];
-      const pts = dropResidue(this.generateBest(seg, { bias: opts.bias, primedState: state, primeText }) || []);
+      // Beim Weiterschreiben gehört der Anfang zum ersten Buchstaben, auch wenn die Attention
+      // noch kurz auf dem Leerzeichen davor steht: dort nichts wegwerfen.
+      const pts = this.generateBest(seg, { bias: opts.bias, primedState: state, primeText, continued: k > 0 }) || [];
       if (out.length) out[out.length - 1][2] = 1;   // Stift absetzen zwischen den Stücken
-      for (const p of pts) out.push([p[0], p[1], p[2], p[3] >= 0 ? p[3] + ciOff : -1]);
+      for (const p of pts) out.push([p[0], p[1], p[2], p[3] >= 0 ? p[3] + ciOff : -1, k]);
       ciOff += seg.length + 1;
       if (k < segments.length - 1 && pts.length > 5) {
         const prime = [[0, 0, 1]].concat(pts.map((p) => [p[0], p[1], p[2]]));

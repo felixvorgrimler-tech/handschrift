@@ -626,7 +626,7 @@
       // ganze Zeile in Modell-Zeichen; Stücke daraus, damit die Zeichenindizes zu dots passen
       const mt = Ink.toModelText(ln.text);
       return engine.generate(mt.text, sample, bias, segments(mt.text)).then((points) => {
-        const res = Ink.pointsToStrokes(points, sample, mt.dots, { x: ln.x, y: ln.y });
+        const res = Ink.pointsToStrokes(points, sample, mt.dots, { x: ln.x, y: ln.y }, Math.random, mt.text.length);
         const avail = right - ln.x;
         if (res.width > avail) {
           const f = avail / res.width;
