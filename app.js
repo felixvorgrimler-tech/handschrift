@@ -299,7 +299,25 @@
       this.canvas.height = Math.round(cssH * dpr);
       this.base.width = this.canvas.width;
       this.base.height = this.canvas.height;
+      // nach dem Drehen: Position in die neuen Grenzen holen
+      if (!this.opts.fixedHeight) this.scrollY = Math.min(this.scrollY, this.maxScroll());
       this.render();
+    }
+
+    // tatsächlich sichtbare Höhe der Fläche (Tastatur, Browser- oder Navigationsleiste können sie verdecken)
+    visibleHeight() {
+      const r = this.canvas.getBoundingClientRect();
+      const vv = window.visualViewport;
+      const bottom = Math.min(r.bottom, vv ? vv.offsetTop + vv.height : window.innerHeight);
+      return Math.max(80, bottom - Math.max(r.top, 0));
+    }
+
+    // Scroll-Grenze: das Ende des Textes lässt sich immer bis in die Bildschirmmitte holen, außerdem bis zum
+    // Ende der Seite mit dem letzten Strich und ein Stück in die nächste (dort weiterschreiben)
+    maxScroll() {
+      const vis = this.visibleHeight() / this.zoom, cb = this.contentBottom();
+      const end = Math.max(cb + vis * 0.6, (pageOf(cb) + 1) * PAGE_H + 300);
+      return Math.max(0, end - vis);
     }
 
     toUnits(e) {
@@ -314,13 +332,31 @@
     }
 
     scrollBy(dy) {
-      if (this.opts.fixedHeight) return;
-      // bis zum Ende der Seite mit dem letzten Strich und noch ein Stück in die nächste (dort weiterschreiben)
-      const end = Math.max(this.contentBottom() + 400, (pageOf(this.contentBottom()) + 1) * PAGE_H + 300);
-      const maxY = Math.max(0, end - this.canvas.clientHeight / this.zoom);
-      this.scrollY = Math.min(Math.max(0, this.scrollY + dy), Math.max(maxY, this.scrollY));
-      if (this.scrollY < 0) this.scrollY = 0;
-      this.render();
+      if (this.opts.fixedHeight) return false;
+      const before = this.scrollY;
+      this.scrollY = Math.min(Math.max(0, this.scrollY + dy), Math.max(this.maxScroll(), this.scrollY));
+      if (this.scrollY !== before) { this.showBar = performance.now(); this.scheduleRender(); }
+      return this.scrollY !== before;
+    }
+
+    // höchstens einmal pro Bild neu zeichnen (beim Scrollen kommen viele Bewegungen pro Bild)
+    scheduleRender() {
+      if (this.rafRender) return;
+      this.rafRender = requestAnimationFrame(() => { this.rafRender = 0; this.render(); });
+    }
+
+    // Schwung nach dem Loslassen: v in Einheiten/ms, bremst gleichmäßig ab
+    fling(v) {
+      cancelAnimationFrame(this.flingRaf);
+      if (Math.abs(v) < 0.05) return;
+      let last = performance.now();
+      const stepFn = (now) => {
+        const dt = Math.min(40, now - last); last = now;
+        if (!this.scrollBy(v * dt)) return;   // Rand erreicht
+        v *= Math.pow(0.996, dt);
+        if (Math.abs(v) > 0.02) this.flingRaf = requestAnimationFrame(stepFn);
+      };
+      this.flingRaf = requestAnimationFrame(stepFn);
     }
 
     // Grundbild: Papier + fertige Striche + Platzhalter
@@ -352,6 +388,17 @@
         b.beginPath(); b.moveTo(this.marker.x, this.marker.y + 4); b.lineTo(this.marker.x, this.marker.y - st.lineSpacing * 0.75); b.stroke();
         b.fillStyle = 'rgba(47, 95, 208, .08)';
         b.fillRect(this.marker.x, this.marker.y - st.lineSpacing * 0.8, rightEdge() - this.marker.x, st.lineSpacing * 0.85);
+      }
+      // Scroll-Leiste rechts, kurz nach dem Scrollen sichtbar
+      if (!this.opts.fixedHeight && this.showBar && performance.now() - this.showBar < 1200) {
+        const vis = this.visibleHeight() / this.zoom, max = Math.max(1, this.maxScroll());
+        const H = this.visibleHeight() * this.dpr;
+        const barH = Math.max(40 * this.dpr, H * vis / (max + vis)), y = (H - barH) * Math.min(1, this.scrollY / max);
+        b.setTransform(1, 0, 0, 1, 0, 0);
+        b.fillStyle = 'rgba(0, 0, 0, .28)';
+        b.fillRect(this.base.width - 7 * this.dpr, y, 4 * this.dpr, barH);
+        clearTimeout(this.barTimer);
+        this.barTimer = setTimeout(() => this.render(), 1250);
       }
       this.present();
     }
@@ -394,6 +441,7 @@
       if (e.pointerType === 'pen') penSeen = true;
       const p = this.toUnits(e);
       const info = { id: e.pointerId, type: e.pointerType, start: p, last: p, lastClient: [e.clientX, e.clientY], mode: null, moved: 0 };
+      cancelAnimationFrame(this.flingRaf);   // Finger auflegen stoppt den Schwung
       this.pointers.set(e.pointerId, info);
       const touches = [...this.pointers.values()].filter((q) => q.type === 'touch');
       if (touches.length >= 2) {
@@ -433,6 +481,9 @@
         if (info.mode === 'pan') {
           const pans = [...this.pointers.values()].filter((q) => q.mode === 'pan').length || 1;
           this.scrollBy(-dy / pans);
+          const now = performance.now();   // Geschwindigkeit der letzten 100 ms für den Schwung
+          info.vel = (info.vel || []).filter((q) => now - q[0] < 100);
+          info.vel.push([now, -dy / pans]);
         }
         return;
       }
@@ -455,6 +506,10 @@
       const info = this.pointers.get(e.pointerId);
       this.pointers.delete(e.pointerId);
       if (!info) return;
+      if (info.mode === 'pan' && info.vel && !this.pointers.size) {
+        const now = performance.now(), recent = info.vel.filter((q) => now - q[0] < 100);
+        if (recent.length > 1) this.fling(recent.reduce((a, q) => a + q[1], 0) / Math.max(16, now - recent[0][0]));
+      }
       if ((info.mode === 'tap' || info.mode === 'tap-or-pan') && !cancel && this.opts.onTap) {
         this.opts.onTap(this.toUnits(e));
       }
