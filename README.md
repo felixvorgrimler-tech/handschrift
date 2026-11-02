@@ -11,6 +11,22 @@ Notiz-App fürs Tablet (Browser/PWA): Mit dem Stift schreiben und getippten Text
 - Stift mit Druckstärke, Radierer (auch über die Stifttaste), Rückgängig/Wiederholen, mehrere Notizen, Export als PNG (Teilen-Menü).
 - Ist ein Stift erkannt, scrollt der Finger nur und zeichnet nicht (Handballen-Schutz).
 
+## Eigene Handschrift aus Notewise (privat)
+
+Viel näher an der eigenen Schrift als die Proben aus dem Dialog: echte Zeilen aus Notewise-Notizen als Vorlage.
+Alles läuft am PC, die Daten liegen im ignorierten Ordner `daten/` und kommen nie ins Repo.
+
+1. `tools/notewise_extract.py <export.zip> daten/seiten [Fächer …]` liest die Striche aus den PDF-Exporten.
+   Notewise speichert jeden Strich als Vektorpfad, zerlegt ihn aber nach Stiftdruck in Stücke; die werden wieder verbunden.
+2. `tools/line_sheet.py` erzeugt Zeilenbögen zum Abschreiben, `tools/add_abschrift.py` speichert die Abschriften.
+3. `tools/make_hwm.py model daten/meine-handschrift.hwm` packt das Modell plus echte Zeilen als Vorlage in eine Datei.
+4. Am Tablet: Einstellungen → „Eigenes Modell laden (.hwm)“. Die Datei bleibt nur im Browser des Tablets.
+
+Experimentell: `tools/train_hand.py` trainiert das Modell auf den abgeschriebenen Zeilen nach (PyTorch, GPU).
+Notewise speichert die Punkte gleichmäßig entlang des Strichs, ohne Zeit; das Schreibtempo wird deshalb nach dem
+Zwei-Drittel-Potenzgesetz nachgebildet. Mit ~250 Zeilen ist das Ergebnis noch nicht besser als Modell + Vorlage
+(`tools/compare_models.py` erzeugt den Vergleich).
+
 ## Grenzen
 
 - Das vortrainierte Modell kennt nur englische Zeichen. **Umlaute** werden als a/o/u geschrieben und die Pünktchen ergänzt. **ß** wird als „ss“ geschrieben, **Q/X/Z** als Großbuchstaben gibt es nicht und werden klein geschrieben. Nicht unterstützte Zeichen (z. B. @, €, %) werden ausgelassen.

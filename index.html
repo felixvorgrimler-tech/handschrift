@@ -124,6 +124,14 @@
     <label>Schrift-Stil für eingefügten Text
       <select id="setStyle"></select>
     </label>
+    <div class="model-box">
+      <b>KI-Modell</b>
+      <p id="modelInfo" class="hint small"></p>
+      <div class="row">
+        <label class="btn">Eigenes Modell laden (.hwm)<input id="modelFile" type="file" accept=".hwm,application/octet-stream" hidden></label>
+        <button id="modelReset" class="btn" hidden>Standardmodell</button>
+      </div>
+    </div>
     <p class="hint small">Die KI läuft komplett auf diesem Gerät. Notizen und Schriftproben bleiben hier im Browser gespeichert.</p>
     <p class="hint small">Modell: Graves-Handschriftsynthese, vortrainierte Gewichte aus sjvasquez/handwriting-synthesis (IAM-Online-Daten).</p>
   </div>

@@ -83,10 +83,20 @@
     init() {
       if (this.ready) return this.ready;
       this.ready = (async () => {
-        const [meta, buf] = await Promise.all([
-          fetch('model/meta.json').then((r) => r.json()),
-          fetch('model/weights.bin').then((r) => r.arrayBuffer()),
-        ]);
+        // eigenes, nachtrainiertes Modell (nur lokal in IndexedDB) oder das Standardmodell
+        const custom = await Store.get('customModel');
+        let meta, buf;
+        if (custom) {
+          meta = custom.meta;
+          buf = custom.buffer.slice(0);
+        } else {
+          [meta, buf] = await Promise.all([
+            fetch('model/meta.json').then((r) => r.json()),
+            fetch('model/weights.bin').then((r) => r.arrayBuffer()),
+          ]);
+        }
+        this.custom = custom ? { name: custom.name, primes: meta.primes || [], lines: meta.lines } : null;
+        Ink.setAlphabet(meta.alphabet);
         this.presets = await fetch('model/presets.json').then((r) => r.json());
         const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
         try {
@@ -100,6 +110,16 @@
         }
       })();
       return this.ready;
+    }
+
+    // nach Modellwechsel: alles verwerfen, beim nächsten init() neu laden
+    reset() {
+      this.workers.forEach((w) => w.w.terminate());
+      this.workers = [];
+      this.local = null;
+      this.ready = null;
+      this.queue = [];
+      this.pending.clear();
     }
 
     spawn(buf, meta) {
@@ -366,7 +386,7 @@
         for (const ev of list) {
           const p = this.toUnits(ev);
           const lp = this.live.pts[this.live.pts.length - 1];
-          if (Math.hypot(p[0] - lp[0], p[1] - lp[1]) < 0.4) continue;
+          if (Math.hypot(p[0] - lp[0], p[1] - lp[1]) < 0.05) continue; // fast nur Duplikate verwerfen, das Tempo soll erhalten bleiben
           this.live.pts.push([p[0], p[1], pressureOf(ev)]);
         }
         this.schedulePresent();
@@ -545,6 +565,14 @@
   // ---------------- Handschrift-Stil ----------------
   function activeSamples() {
     if (state.settings.style === 'own') {
+      // Eigenes Modell: mit echten Zeilen aus den Trainingsdaten starten (gleicher Schreiber)
+      if (engine.custom && engine.custom.primes.length) {
+        return engine.custom.primes.map((p, i) => {
+          const smp = Ink.presetSample(p, state.settings.lineSpacing);
+          smp.id = 'custom-' + i + '-' + state.settings.lineSpacing;
+          return smp;
+        });
+      }
       const own = state.samples.filter((s) => s.enabled !== false);
       if (own.length) return own;
     }
@@ -576,19 +604,40 @@
     return lines.map((t, i) => ({ text: t, x: at.x, y: at.y + i * state.settings.lineSpacing }));
   }
 
+  // Das Modell verliert bei langen Zeilen den Faden; daher in Stücke an Wortgrenzen teilen
+  const MAX_SEGMENT = 34;
+  function segments(text) {
+    const out = [];
+    let cur = '';
+    for (const w of text.split(' ')) {
+      if (cur && (cur + ' ' + w).length > MAX_SEGMENT) { out.push(cur); cur = w; } else cur = cur ? cur + ' ' + w : w;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
   async function writeLines(lines, samples, bias, ink, onLine, right = RIGHT) {
     const jobs = lines.map((ln, i) => {
       if (!ln.text.trim()) return Promise.resolve(null);
-      const mt = Ink.toModelText(ln.text);
       const sample = samples[(i + Math.floor(Math.random() * samples.length)) % samples.length];
-      return engine.generate(mt.text, sample, bias).then((points) => {
-        const res = Ink.pointsToStrokes(points, sample, mt.dots, { x: ln.x, y: ln.y });
+      const segs = segments(ln.text).map((t) => ({ t, mt: Ink.toModelText(t) }));
+      return Promise.all(segs.map((sg) => engine.generate(sg.mt.text, sample, bias))).then((results) => {
+        // Stücke nebeneinander setzen, mit einem Wortabstand dazwischen
+        const gap = (sample.charW || 11) * 0.85;
+        let x = ln.x;
+        let all = [];
+        results.forEach((points, k) => {
+          const res = Ink.pointsToStrokes(points, sample, segs[k].mt.dots, { x, y: ln.y });
+          all = all.concat(res.strokes);
+          x += res.width + gap * (0.8 + Math.random() * 0.4);
+        });
+        const width = x - ln.x;
         const avail = right - ln.x;
-        if (res.width > avail) {
-          const f = avail / res.width;
-          for (const s of res.strokes) for (const p of s.pts) p[0] = ln.x + (p[0] - ln.x) * f;
+        if (width > avail) {
+          const f = avail / width;
+          for (const s of all) for (const p of s.pts) p[0] = ln.x + (p[0] - ln.x) * f;
         }
-        const strokes = res.strokes.map((s) => ({ id: uid(), pts: s.pts.map((p) => [+p[0].toFixed(2), +p[1].toFixed(2), +p[2].toFixed(2)]), color: ink.color, width: ink.width }));
+        const strokes = all.map((s) => ({ id: uid(), pts: s.pts.map((p) => [+p[0].toFixed(2), +p[1].toFixed(2), +p[2].toFixed(2)]), color: ink.color, width: ink.width }));
         onLine(ln, strokes);
         return strokes;
       });
@@ -800,6 +849,27 @@
     page.render();
   }
 
+  // Eigenes Modell: Datei "*.hwm" = "HWM1" + uint32 Länge + meta.json + float16-Gewichte
+  async function importModel(file) {
+    const ab = await file.arrayBuffer();
+    const head = new TextDecoder().decode(new Uint8Array(ab, 0, 4));
+    if (head !== 'HWM1') throw new Error('Keine Handschrift-Modelldatei (.hwm)');
+    const n = new DataView(ab).getUint32(4, true);
+    const meta = JSON.parse(new TextDecoder().decode(new Uint8Array(ab, 8, n)));
+    await Store.set('customModel', { name: file.name, meta, buffer: ab.slice(8 + n) });
+    engine.reset();
+    await withEngine();
+  }
+
+  async function updateModelInfo() {
+    await engine.init().catch(() => {});
+    $('modelInfo').textContent = engine.custom
+      ? `Eigenes Modell aktiv: ${engine.custom.name} – ${engine.custom.lines ? `nachtrainiert auf ${engine.custom.lines} Zeilen deiner Handschrift`
+        : `Standardmodell mit ${engine.custom.primes.length} echten Zeilen aus deinen Notizen als Vorlage`}`
+      : 'Standardmodell (fremde Handschriften, nutzt deine Schriftproben als Vorlage)';
+    $('modelReset').hidden = !engine.custom;
+  }
+
   // ---------------- Start ----------------
   async function init() {
     Object.assign(state.settings, (await Store.get('settings')) || {});
@@ -886,6 +956,7 @@
       $('setLine').value = String(state.settings.lineSpacing);
       $('setFinger').checked = state.settings.finger;
       fillStyleSelect();
+      updateModelInfo();
       $('settingsModal').hidden = false;
     };
     $('settingsClose').onclick = () => { $('settingsModal').hidden = true; };
@@ -893,6 +964,20 @@
     $('setLine').onchange = () => { state.settings.lineSpacing = +$('setLine').value; saveSettings(); };
     $('setFinger').onchange = () => { state.settings.finger = $('setFinger').checked; saveSettings(); };
     $('setStyle').onchange = () => { state.settings.style = $('setStyle').value; saveSettings(); };
+    $('modelFile').onchange = async () => {
+      const f = $('modelFile').files[0];
+      if (!f) return;
+      $('modelInfo').textContent = 'Modell wird geladen …';
+      try { await importModel(f); showStatus('Eigenes Modell geladen', 2500); } catch (e) { alert('Fehler: ' + e.message); }
+      $('modelFile').value = '';
+      updateModelInfo();
+    };
+    $('modelReset').onclick = async () => {
+      if (!confirm('Eigenes Modell entfernen und zum Standardmodell zurück?')) return;
+      await Store.del('customModel');
+      engine.reset();
+      updateModelInfo();
+    };
 
     window.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && document.activeElement.tagName !== 'TEXTAREA' && document.activeElement.tagName !== 'INPUT') {

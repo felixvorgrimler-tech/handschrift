@@ -7,9 +7,14 @@
   const MAX_PRIME = 1100;
 
   // ---------- Zeichensatz ----------
-  const ALPHABET = new Set([' ', '!', '"', '#', "'", '(', ')', ',', '-', '.',
+  // Standard-Alphabet des vortrainierten Modells; ein eigenes Modell bringt seines mit (setAlphabet)
+  let ALPHABET = new Set([' ', '!', '"', '#', "'", '(', ')', ',', '-', '.',
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', ':', ';', '?',
     ...'ABCDEFGHIJKLMNOPRSTUVWY', ...'abcdefghijklmnopqrstuvwxyz']);
+
+  function setAlphabet(chars) {
+    ALPHABET = new Set(chars.filter((c) => c !== '\x00'));
+  }
 
   const REPLACE = {
     'Q': 'q', 'X': 'x', 'Z': 'z', 'ß': 'ss', '„': '"', '“': '"', '”': '"', '‚': "'", '‘': "'", '’': "'",
@@ -24,7 +29,7 @@
     const dots = [];
     const unknown = new Set();
     for (const ch of text) {
-      if (UMLAUT[ch]) { out += UMLAUT[ch]; dots.push(true); continue; }
+      if (UMLAUT[ch] && !ALPHABET.has(ch)) { out += UMLAUT[ch]; dots.push(true); continue; }
       let r = ALPHABET.has(ch) ? ch : REPLACE[ch];
       if (r === undefined) { unknown.add(ch); r = ' '; }
       for (const c of r) { out += ALPHABET.has(c) ? c : ' '; dots.push(false); }
@@ -116,6 +121,14 @@
     return out;
   }
 
+  function decimate(pts, step) {
+    if (pts.length <= 2) return pts.map((p) => [p[0], p[1]]);
+    const out = [];
+    for (let k = 0; Math.round(k) < pts.length - 1; k += step) out.push(pts[Math.round(k)]);
+    out.push(pts[pts.length - 1]);
+    return out.map((p) => [p[0], p[1]]);
+  }
+
   function strokeLength(pts) {
     let l = 0;
     for (let i = 1; i < pts.length; i++) l += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
@@ -127,12 +140,15 @@
   function prepareSample(strokes, text, lineY) {
     // Reihenfolge wie geschrieben beibehalten (Zeitordnung), nur leere entfernen
     strokes = strokes.filter((s) => s.length > 0);
-    const total = strokes.reduce((a, s) => a + strokeLength(s) + 1, 0);
+    // Stift-Events kommen in gleichen Zeitabständen: jeden k-ten Punkt behalten, damit das
+    // Schreibtempo erhalten bleibt (wie in den Trainingsdaten). Gleichmäßiges Verteilen entlang
+    // des Strichs würde es verwischen und passt deutlich schlechter zum Modell.
     const nChars = Math.max(1, text.replace(/\s/g, '').length + text.split(' ').length * 0.5);
-    let spacing = total / (nChars * POINTS_PER_CHAR);
+    const nPts = strokes.reduce((a, s) => a + s.length, 0);
+    const step = Math.max(1, nPts / (nChars * POINTS_PER_CHAR));
     let coords = [];
     for (const s of strokes) {
-      const r = resampleStroke(s, spacing);
+      const r = decimate(s, step);
       r.forEach((p, i) => coords.push([p[0], -p[1], i === r.length - 1 ? 1 : 0]));
     }
     const meanYScreen = -coords.reduce((a, p) => a + p[1], 0) / coords.length;
@@ -169,7 +185,25 @@
 
   // ---------- Modell-Ausgabe -> Seitenstriche ----------
   // points: [[dx,dy,eos,charIdx]], dots: Umlaut-Markierung pro Zeichen
+  // Ausreißer der Stichprobe abfangen (Modell-Einheiten, Median-Schritt ~1):
+  // Punkte, die noch zur Vorlage gehören (Zeichenindex < 0), weglassen und seltene Riesensprünge begrenzen.
+  function cleanPoints(points) {
+    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    let start = 0;
+    while (start < points.length && points[start][3] < 0) start++;
+    // angefangenen Strich der Vorlage bis zum nächsten Absetzen mit verwerfen
+    if (start > 0) while (start < points.length && points[start - 1][2] !== 1) start++;
+    return points.slice(start).map((p, i, a) => {
+      const penUp = i > 0 && a[i - 1][2] === 1;
+      return penUp
+        ? [clamp(p[0], -12, 25), clamp(p[1], -10, 10), p[2], p[3]]
+        : [clamp(p[0], -8, 8), clamp(p[1], -8, 8), p[2], p[3]];
+    });
+  }
+
   function pointsToStrokes(points, sample, dots, origin, rng = Math.random) {
+    if (!points.length) return { strokes: [], width: 0 };
+    points = cleanPoints(points);
     if (!points.length) return { strokes: [], width: 0 };
     let coords = offsetsToCoords(points);
     const charOf = coords.map((p) => p[3]);
@@ -289,7 +323,7 @@
   }
 
   global.Ink = {
-    toModelText, prepareSample, presetSample, pointsToStrokes, drawStroke, strokeBounds,
+    toModelText, setAlphabet, hasChar: (c) => ALPHABET.has(c), prepareSample, presetSample, pointsToStrokes, drawStroke, strokeBounds,
     offsetsToCoords, resampleStroke,
   };
 })(typeof self !== 'undefined' ? self : this);

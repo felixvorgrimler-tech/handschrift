@@ -88,3 +88,5 @@ h3 small { color: var(--muted); font-weight: normal; }
   .tb.wide::before { content: "✍"; font-size: 20px; }
   #colors .swatch:nth-child(n+4) { display: none; }
 }
+.model-box { border-top: 1px solid var(--ui-border); margin-top: 14px; padding-top: 10px; }
+.modal-box.small label.btn { display: inline-block; margin: 0; }
