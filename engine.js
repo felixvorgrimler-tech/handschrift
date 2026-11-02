@@ -369,11 +369,12 @@
   };
 
   // Am Anfang setzt das Modell manchmal erst einen Punkt oder kurzen Strich (Rest der Vorlage bzw.
-  // des vorigen Stücks, oft ein Satzzeichen). Solche Striche vor dem ersten Buchstaben weg:
+  // des vorigen Stücks, oft ein Satzzeichen oder nachgetragene ü-Pünktchen, die die App ohnehin
+  // selbst setzt). Solche Striche vor dem ersten Buchstaben weg:
   // winzige immer, etwas größere nur, solange die Attention noch ganz vor dem Text steht.
   // Ihr Versatz wird auf den nächsten Punkt übertragen, damit die Position stimmt.
   function dropLeadingSpecks(pts) {
-    for (let n = 0; n < 2; n++) {
+    for (let n = 0; n < 3; n++) {
       let end = pts.findIndex((p) => p[2] > 0.5);
       if (end < 0 || end >= pts.length - 1) break;
       let ext = 0, before = true;
@@ -381,7 +382,7 @@
         if (i > 0) ext += Math.abs(pts[i][0]) + Math.abs(pts[i][1]);
         if (pts[i][3] >= 0) before = false;
       }
-      if (!((end + 1 <= 8 && ext < 3) || (before && ext < 8))) break;
+      if (!((end + 1 <= 12 && ext < 3) || (before && ext < 5))) break;
       let dx = 0, dy = 0;
       for (let i = 0; i <= end; i++) { dx += pts[i][0]; dy += pts[i][1]; }
       const next = pts[end + 1].slice();
@@ -429,12 +430,14 @@
       while (k < segments.length) {
         const seg = segments[k], oo = o();
         let best = null, bestScore = Infinity, bestErr = 1;
-        // 4 Versuche; ist danach noch ein Wortteil unsicher erkannt, 2 weitere
-        for (let t = 0; t < (bestErr > 0.08 ? 6 : 4); t++) {
+        // 4 Versuche; ist danach noch ein Wortteil unsicher erkannt, bis zu 4 weitere
+        for (let t = 0; t < (bestErr > 0.08 ? 8 : 4); t++) {
           let pts = this.generate(seg, oo);
           pts = dropLeadingSpecks(pts);
           const pen = legibilityPenalty(pts, seg, oo.continued);
-          const err = await opts.score(seg, pts, !oo.continued);
+          // frei lesen am Zeilenanfang und bei Großbuchstaben: die missraten am ehesten, und die
+          // Wortteil-Sicherheit allein lässt z. B. ein schiefes W noch durchgehen
+          const err = await opts.score(seg, pts, !oo.continued || /\p{Lu}/u.test(seg));
           const s = err + 0.03 * pen;
           if (s < bestScore) { best = pts; bestScore = s; bestErr = err; }
           if (err < 0.02 && pen <= 2) break;

@@ -24,12 +24,15 @@
   const UMLAUT = { 'ä': 'a', 'ö': 'o', 'ü': 'u', 'Ä': 'A', 'Ö': 'O', 'Ü': 'U' };
 
   // Wandelt Text in Modell-Zeichen um. dots[i] = true, wenn Zeichen i Umlaut-Punkte bekommt.
+  // Kennt das Modell den Umlaut (nachtrainiert), schreibt es ihn selbst: Die Buchstaben drumherum
+  // werden dann so geformt wie in echten Wörtern („über“ statt des unbekannten „uber“). Die Pünktchen
+  // setzt es aber nicht zuverlässig, die kommen weiterhin von der App.
   function toModelText(text) {
     let out = '';
     const dots = [];
     const unknown = new Set();
     for (const ch of text) {
-      if (UMLAUT[ch] && !ALPHABET.has(ch)) { out += UMLAUT[ch]; dots.push(true); continue; }
+      if (UMLAUT[ch]) { out += ALPHABET.has(ch) ? ch : UMLAUT[ch]; dots.push(true); continue; }
       let r = ALPHABET.has(ch) ? ch : REPLACE[ch];
       if (r === undefined) { unknown.add(ch); r = ' '; }
       for (const c of r) { out += ALPHABET.has(c) ? c : ' '; dots.push(false); }
@@ -312,8 +315,13 @@
         // Die Attention springt etwas zu früh zum nächsten Zeichen: die ersten Punkte
         // gehören meist noch zum Vorgänger, daher nur den hinteren Teil nehmen.
         let own = pts.filter((p) => p[3] === ci);
-        if (own.length < 3) return;
-        own = own.slice(Math.floor(own.length * 0.35));
+        if (own.length >= 3) own = own.slice(Math.floor(own.length * 0.35));
+        else {
+          // Umlaut zu schnell geschrieben (kaum eigene Punkte): Ende des Vorgängers + Anfang des Nachfolgers
+          const prev = pts.filter((p) => p[3] === ci - 1), next = pts.filter((p) => p[3] === ci + 1);
+          own = own.concat(prev.slice(Math.floor(prev.length * 0.6)), next.slice(0, Math.ceil(next.length * 0.4)));
+          if (own.length < 3) return;
+        }
         const xs = own.map((p) => p[0]), ys = own.map((p) => p[1]);
         const x0 = Math.min(...xs), x1 = Math.max(...xs), top = Math.min(...ys);
         const cx = (x0 + x1) / 2 + xh * 0.1;

@@ -97,7 +97,8 @@
         }
         this.custom = custom ? { name: custom.name, primes: meta.primes || [], lines: meta.lines } : null;
         // Zeichen, die das Modell nicht sauber kann (meta.avoid), schreibt die App selbst (Pünktchen, ss)
-        Ink.setAlphabet(meta.alphabet.filter((c) => !(meta.avoid || []).includes(c)));
+        // kleine Umlaute schreibt das Modell trotz avoid selbst (nur ohne Pünktchen, siehe toModelText)
+        Ink.setAlphabet(meta.alphabet.filter((c) => 'äöü'.includes(c) || !(meta.avoid || []).includes(c)));
         this.presets = await fetch('model/presets.json').then((r) => r.json());
         const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
         try {
@@ -616,11 +617,20 @@
 
   // Das Modell verliert bei langen Zeilen den Faden; daher in Stücke an Wortgrenzen teilen
   const MAX_SEGMENT = 22;
+  // Ein Stück, das mit einem Großbuchstaben beginnt, bekommt diesen oft schief (Übergang vom vorigen
+  // Stück); daher dann ein kleines Wort früher anfangen („in Geschichte …“ statt „Geschichte …“).
   function segments(text) {
     const out = [];
     let cur = '';
     for (const w of text.split(' ')) {
-      if (cur && (cur + ' ' + w).length > MAX_SEGMENT) { out.push(cur); cur = w; } else cur = cur ? cur + ' ' + w : w;
+      if (cur && (cur + ' ' + w).length > MAX_SEGMENT) {
+        const words = cur.split(' ');
+        const last = words[words.length - 1];
+        if (/^\p{Lu}/u.test(w) && words.length > 1 && !/^\p{Lu}/u.test(last) && (last + ' ' + w).length <= MAX_SEGMENT) {
+          out.push(words.slice(0, -1).join(' '));
+          cur = last + ' ' + w;
+        } else { out.push(cur); cur = w; }
+      } else cur = cur ? cur + ' ' + w : w;
     }
     if (cur) out.push(cur);
     return out;

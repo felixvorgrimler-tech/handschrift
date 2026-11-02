@@ -26,7 +26,8 @@ Nachtraining: `tools/train_hand.py` trainiert das Modell auf den abgeschriebenen
 Notewise speichert die Punkte gleichmäßig entlang des Strichs, ohne Zeit; das Schreibtempo wird deshalb nach dem
 Zwei-Drittel-Potenzgesetz nachgebildet. Erste Schicht und Attention („lesen“ den Text) bleiben eingefroren,
 sonst verlernt das Modell, dem Text zu folgen. Mit ~730 Zeilen schreibt es deutlich ähnlicher als Modell + Vorlage
-(`tools/compare_models.py` erzeugt den Vergleich). Umlaute/ß lernt es noch nicht; die schreibt die App selbst.
+(`tools/compare_models.py` erzeugt den Vergleich). Kleine Umlaute schreibt das nachtrainierte Modell selbst (die Buchstaben
+drumherum werden dann wie in echten Wörtern geformt, z. B. das b in „über“), die Pünktchen setzt aber die App; ß wird „ss“.
 
 Lesbarkeit in der App: Zeilen werden in Stücken von ~22 Zeichen erzeugt; jedes Stück wird geprüft (übersprungene
 oder verschmierte Buchstaben laut Attention, Reste der Vorlage, Riesensprünge, zu große Höhe) und bei Bedarf neu
@@ -34,9 +35,10 @@ erzeugt (bis zu 6 Versuche).
 
 **Gründlich prüfen** (Einstellungen): Jede Variante eines Stücks wird zusätzlich von einer deutschen Texterkennung
 (TrOCR, siehe `ocr/`) geprüft: Wie sicher erkennt sie im Bild jeden Wortteil des gewünschten Texts? So fallen einzelne
-schlecht geformte Buchstaben auf, auch wenn man das Wort erraten könnte. Am Zeilenanfang (dort missraten Großbuchstaben
-am häufigsten) liest sie zusätzlich frei. Die App nimmt die Variante mit der besten Note. Das kostet einmalig ca. 65 MB
-Download und macht das Schreiben etwa 3- bis 4-mal so langsam (am PC ~45 s für drei Zeilen).
+schlecht geformte Buchstaben auf, auch wenn man das Wort erraten könnte. Bei Stücken mit Großbuchstaben (die missraten
+am häufigsten) liest sie zusätzlich frei. Die App nimmt die Variante mit der besten Note (4 Versuche, bei Bedarf bis 8).
+Stücke beginnen möglichst nicht mit einem großgeschriebenen Wort. Das kostet einmalig ca. 65 MB Download und macht das
+Schreiben deutlich langsamer (am PC ~75 s für zwei lange Zeilen).
 
 Immer aktiv: Striche, die das Modell nach dem letzten Zeichen noch setzt (Haken hinter dem Satzpunkt), und einzelne
 Punkte vor dem ersten Buchstaben werden entfernt.

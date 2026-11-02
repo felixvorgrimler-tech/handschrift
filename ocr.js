@@ -87,8 +87,8 @@
   }
 
   // Fehlermaß 0..1: Anteil unsicher erkannter Wortteile (p < 0.5 zählt mit 1 − p).
-  // read = zusätzlich frei lesen lassen (am Zeilenanfang: dort missraten Großbuchstaben am häufigsten,
-  // und ein Wortteil gilt oft noch als „sicher“, obwohl man z. B. „lteute“ liest)
+  // read = zusätzlich frei lesen lassen (bei Großbuchstaben: die missraten am häufigsten, und ein
+  // Wortteil gilt oft noch als „sicher“, obwohl man z. B. „lteute“ liest)
   function score(text, points, read = false) {
     const job = queue.then(async () => {
       const pipe = await load();
