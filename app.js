@@ -133,7 +133,7 @@
           const m = ev.data;
           if (m.type === 'ready') { clearTimeout(timer); res(slot); return; }
           if (m.type === 'score') {   // Gründlich: Variante lesen lassen
-            OCR.score(m.seg, m.points).catch(() => 0).then((err) => w.postMessage({ type: 'scored', ask: m.ask, err }));
+            OCR.score(m.seg, m.points, m.read).catch(() => 0).then((err) => w.postMessage({ type: 'scored', ask: m.ask, err }));
             return;
           }
           const p = this.pending.get(m.id);
@@ -170,7 +170,7 @@
               if (!st) { st = this.local.prime(job.prime.offsets, job.prime.text); this.localPrimed.set(job.prime.key, st); }
             }
             const o = { bias: job.bias, primedState: st, primeText: job.prime ? job.prime.text : '' };
-            if (job.check) o.score = (seg, pts) => OCR.score(seg, pts).catch(() => 0);
+            if (job.check) o.score = (seg, pts, read) => OCR.score(seg, pts, read).catch(() => 0);
             job.resolve(await (job.segments ? this.local.generateLine(job.segments, o) : this.local.generateBest(job.text, o)));
           })().catch((e) => job.reject(e)).then(() => {
             this.localBusy = false;

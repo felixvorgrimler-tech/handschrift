@@ -33,8 +33,16 @@ oder verschmierte Buchstaben laut Attention, Reste der Vorlage, Riesensprünge, 
 erzeugt (bis zu 6 Versuche).
 
 **Gründlich prüfen** (Einstellungen): Jede Variante eines Stücks wird zusätzlich von einer deutschen Texterkennung
-gelesen (TrOCR, siehe `ocr/`), und die App nimmt die Variante, die am besten zum Text passt. Das kostet einmalig ca. 65 MB
-Download und macht das Schreiben etwa doppelt so langsam (am PC ~20 s für zwei Zeilen statt ~10 s).
+(TrOCR, siehe `ocr/`) geprüft: Wie sicher erkennt sie im Bild jeden Wortteil des gewünschten Texts? So fallen einzelne
+schlecht geformte Buchstaben auf, auch wenn man das Wort erraten könnte. Am Zeilenanfang (dort missraten Großbuchstaben
+am häufigsten) liest sie zusätzlich frei. Die App nimmt die Variante mit der besten Note. Das kostet einmalig ca. 65 MB
+Download und macht das Schreiben etwa 3- bis 4-mal so langsam (am PC ~45 s für drei Zeilen).
+
+Immer aktiv: Striche, die das Modell nach dem letzten Zeichen noch setzt (Haken hinter dem Satzpunkt), und einzelne
+Punkte vor dem ersten Buchstaben werden entfernt.
+
+Vorlagen auswählen: `tools/make_hwm.py daten/modell_v6 daten/kandidaten.hwm 16` baut eine Datei mit 16 Kandidaten,
+`daten/prime_test.html` bewertet sie (wie gut Zeilenanfänge damit gelesen werden), `tools/pick_primes.py` übernimmt die besten.
 
 ## Grenzen
 

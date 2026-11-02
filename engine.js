@@ -214,6 +214,29 @@
         input = next;
         if (opts.onStep && t % 50 === 0) opts.onStep(t / maxSteps);
       }
+      // Striche, die erst beginnen, wenn die Attention schon hinter dem letzten Zeichen steht,
+      // gehören zu keinem Buchstaben (Haken hinter dem Satzpunkt, Punkt hinter dem Wort): weg.
+      // Nicht aber Striche, die zurück nach links springen (i-Punkt, t-Strich nachgetragen).
+      let cut = out.length;
+      for (let i = out.length - 1; i >= 0; i--) {
+        if (!(i === 0 || out[i - 1][2] === 1)) continue;
+        if (out[i][3] >= text.length && out[i][0] > -1) cut = i; else break;
+      }
+      out.length = cut;
+      // Endet der Text mit Punkt/Komma: nach dem ersten kleinen Strich (dem Punkt) nichts mehr
+      if (/[.,]$/.test(text)) {
+        let i = 0, dot = -1;
+        while (i < out.length) {
+          let j = i;
+          while (j < out.length - 1 && out[j][2] !== 1) j++;
+          let y = 0, lo = 0, hi = 0, w = 0;
+          for (let q = i + 1; q <= j; q++) { y += out[q][1]; w += Math.abs(out[q][0]); lo = Math.min(lo, y); hi = Math.max(hi, y); }
+          if (out[i][3] >= text.length - 1 && hi - lo < 2.5 && w < 2.5) { dot = j; break; }
+          i = j + 1;
+        }
+        if (dot >= 0) out.length = dot + 1;
+      }
+      if (out.length) out[out.length - 1][2] = 1;
       return out;
     }
   }
@@ -221,6 +244,46 @@
   // Lesbarkeit grob prüfen: die Attention zeigt, an welchem Buchstaben das Modell gerade schreibt.
   // Übersprungene (kaum Punkte) oder verschmierte Buchstaben (sehr viele Punkte) und
   // abgebrochene Zeilen ergeben Fehlerpunkte; 0 = unauffällig.
+  // Zu kurze Oberlängen: Großbuchstaben und b, d, h, k, l müssen deutlich über die Mittellinie reichen,
+  // und der Grundstrich eines Großbuchstabens (z. B. beim H, B) darf kein kurzer Strich sein,
+  // sonst liest man „lteute“ statt „Heute“ oder „Repuplik“. b = Grundlinie (y nach oben).
+  // Rückgabe: Anzahl auffälliger Buchstaben.
+  const TALL = /[A-ZÄÖÜbdhklß]/;
+  function shortAscenders(points, text, b) {
+    const n = text.length;
+    const top = new Array(n).fill(-Infinity);
+    const strokes = [];   // je Strich: Zeichen (erster Punkt), Höhe, Breite
+    let x = 0, y = 0, cur = null;
+    for (const p of points) {
+      x += p[0]; y += p[1];
+      const ci = p[3];
+      if (ci >= 0 && ci < n && y > top[ci]) top[ci] = y;
+      if (!cur) cur = { ci, x0: x, x1: x, y0: y, y1: y };
+      cur.x0 = Math.min(cur.x0, x); cur.x1 = Math.max(cur.x1, x);
+      cur.y0 = Math.min(cur.y0, y); cur.y1 = Math.max(cur.y1, y);
+      if (p[2] === 1) { strokes.push(cur); cur = null; }
+    }
+    if (cur) strokes.push(cur);
+    const heights = [];
+    for (let i = 0; i < n; i++) if (TALL.test(text[i]) && top[i] > -Infinity) heights.push(top[i] - b);
+    if (heights.length < 2) return 0;
+    heights.sort((u, v) => u - v);
+    const asc = heights[heights.length >> 1];
+    if (asc < 6) return 0;
+    let bad = 0;
+    for (let i = 0; i < n; i++) if (TALL.test(text[i]) && top[i] > -Infinity && top[i] - b < 0.6 * asc) bad++;
+    // erster Strich eines Großbuchstabens: senkrechter Grundstrich, aber nur halb so hoch wie üblich
+    const seen = new Set();
+    for (const s of strokes) {
+      if (s.ci < 0 || s.ci >= n || seen.has(s.ci)) continue;
+      seen.add(s.ci);
+      if (!/[A-ZÄÖÜ]/.test(text[s.ci])) continue;
+      const h = s.y1 - s.y0, w = s.x1 - s.x0;
+      if (h > 2 * w && h < 0.55 * asc) bad++;
+    }
+    return bad;
+  }
+
   function legibilityPenalty(points, text, ignorePrior = false) {
     const n = text.length;
     const cnt = new Array(n).fill(0);
@@ -242,6 +305,18 @@
       if (cnt[i] > 3.5 * med) bad += 1;
     }
     if (maxCi < n - 1) bad += 3;
+    // Punkt/Komma am Ende muss klein sein; ein ganzer Buchstabenstrich dort ist ein Zusatzzeichen
+    if (/[.,]$/.test(text)) {
+      let y = 0, lo = Infinity, hi = -Infinity, startCi = null;
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        y += p[1];
+        if (startCi === null) startCi = p[3];
+        if (startCi === n - 1) { lo = Math.min(lo, y); hi = Math.max(hi, y); }
+        if (p[2] === 1) startCi = null;
+      }
+      if (hi - lo > 2.5) bad += 2;
+    }
 
     // Form: Reste der Vorlage, Riesensprünge, Stück viel höher als eine Zeile (Modell-Einheiten)
     let prior = 0, y = 0, yMin = 0, yMax = 0, wild = 0;
@@ -274,6 +349,7 @@
       const b = tall.map((e) => e[0]).sort((u, v) => u - v)[tall.length >> 1];   // Grundlinie
       const off = tall.filter((e) => e[0] > b + 12 || e[1] < b - 6).length;   // bei echten Zeilen 11 % Treffer
       if (off >= 1) bad += 2 * off;
+      bad += 2 * shortAscenders(points, text, b);
     }
     if (yMax - yMin > 48) bad += 3;   // echte Zeilen: Median 32, 95 % unter 44
     return bad;
@@ -291,6 +367,29 @@
     }
     return best;
   };
+
+  // Am Anfang setzt das Modell manchmal erst einen Punkt oder kurzen Strich (Rest der Vorlage bzw.
+  // des vorigen Stücks, oft ein Satzzeichen). Solche Striche vor dem ersten Buchstaben weg:
+  // winzige immer, etwas größere nur, solange die Attention noch ganz vor dem Text steht.
+  // Ihr Versatz wird auf den nächsten Punkt übertragen, damit die Position stimmt.
+  function dropLeadingSpecks(pts) {
+    for (let n = 0; n < 2; n++) {
+      let end = pts.findIndex((p) => p[2] > 0.5);
+      if (end < 0 || end >= pts.length - 1) break;
+      let ext = 0, before = true;
+      for (let i = 0; i <= end; i++) {
+        if (i > 0) ext += Math.abs(pts[i][0]) + Math.abs(pts[i][1]);
+        if (pts[i][3] >= 0) before = false;
+      }
+      if (!((end + 1 <= 8 && ext < 3) || (before && ext < 8))) break;
+      let dx = 0, dy = 0;
+      for (let i = 0; i <= end; i++) { dx += pts[i][0]; dy += pts[i][1]; }
+      const next = pts[end + 1].slice();
+      next[0] += dx; next[1] += dy;
+      pts = [next].concat(pts.slice(end + 2));
+    }
+    return pts;
+  }
 
   // Eine Zeile aus mehreren kurzen Stücken: jedes Stück wird mit dem zuvor Geschriebenen als
   // Vorlage fortgesetzt. So bleiben Größe, Grundlinie und Wortabstand durchgehend gleich, und
@@ -320,21 +419,25 @@
     // noch kurz auf dem Leerzeichen davor steht: dort nichts wegwerfen.
     const o = () => ({ bias: opts.bias, primedState: state, primeText, continued: k > 0 });
     if (!opts.score) {
-      while (k < segments.length) add(this.generateBest(segments[k], o()));
+      while (k < segments.length) {
+        const pts = this.generateBest(segments[k], o()) || [];
+        add(dropLeadingSpecks(pts));
+      }
       return out;
     }
     return (async () => {
       while (k < segments.length) {
         const seg = segments[k], oo = o();
         let best = null, bestScore = Infinity, bestErr = 1;
-        // 4 Versuche; ist danach noch keiner gut lesbar (> 15 % falsch gelesen), 2 weitere
-        for (let t = 0; t < (bestErr > 0.15 ? 6 : 4); t++) {
-          const pts = this.generate(seg, oo);
+        // 4 Versuche; ist danach noch ein Wortteil unsicher erkannt, 2 weitere
+        for (let t = 0; t < (bestErr > 0.08 ? 6 : 4); t++) {
+          let pts = this.generate(seg, oo);
+          pts = dropLeadingSpecks(pts);
           const pen = legibilityPenalty(pts, seg, oo.continued);
-          const err = await opts.score(seg, pts);
+          const err = await opts.score(seg, pts, !oo.continued);
           const s = err + 0.03 * pen;
           if (s < bestScore) { best = pts; bestScore = s; bestErr = err; }
-          if (err === 0 && pen <= 2) break;
+          if (err < 0.02 && pen <= 2) break;
         }
         add(best);
       }
@@ -342,7 +445,7 @@
     })();
   };
 
-  global.HWEngine = { Model, legibilityPenalty };
+  global.HWEngine = { Model, legibilityPenalty, shortAscenders };
 
   // Worker-Modus
   if (typeof WorkerGlobalScope !== 'undefined' && global instanceof WorkerGlobalScope) {
@@ -351,10 +454,10 @@
     // Gründlich: Varianten zum Lesen an den Hauptthread schicken, Antwort = Fehlerquote
     const scores = new Map();
     let nextAsk = 1;
-    const askScore = (id) => (seg, pts) => new Promise((res) => {
+    const askScore = (id) => (seg, pts, read) => new Promise((res) => {
       const ask = nextAsk++;
       scores.set(ask, res);
-      global.postMessage({ type: 'score', id, ask, seg, points: pts });
+      global.postMessage({ type: 'score', id, ask, seg, points: pts, read });
     });
     global.onmessage = async (ev) => {
       const msg = ev.data;

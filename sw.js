@@ -1,5 +1,5 @@
 // Offline-Cache: App-Dateien und Modell einmal laden, danach ohne Internet nutzbar.
-const CACHE = 'handschrift-v6';
+const CACHE = 'handschrift-v7';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'engine.js', 'ink.js', 'ocr.js', 'icon.svg', 'manifest.webmanifest',
   'model/meta.json', 'model/weights.bin', 'model/presets.json',
