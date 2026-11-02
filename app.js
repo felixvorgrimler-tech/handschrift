@@ -10,6 +10,17 @@
   const PAGE_H = Math.round(PAGE_W * 4960 / 3508);   // 1414
   const BOTTOM = 60;          // unterer Rand: keine Linie tiefer als PAGE_H − BOTTOM
   const pageOf = (y) => Math.max(0, Math.floor(y / PAGE_H));
+  // Notewise-Karo („Alphabet Handwritten Grid“): Kästchen 120 Notewise-Einheiten, erste Linie bei 84
+  // (gemessen an einem importierten Export). Eine Kästchenzeile = eine Schreibzeile, wie in deinen Notizen.
+  const NW_UNIT = 3508 / PAGE_W;
+  const GRID = 120 / NW_UNIT, GRID_OFF = 84 / NW_UNIT;
+  const nwGrid = () => state.settings.paper === 'nwgrid';
+  // erste Schreiblinie einer Seite, linker und rechter Rand: deine Zeilen beginnen auf der ersten
+  // Kästchenlinie (~3 % der Breite) und gehen bis ~98 % der Breite
+  const firstLine = () => (nwGrid() ? GRID_OFF + GRID : TOP);
+  const leftEdge = () => (nwGrid() ? GRID_OFF + 6 : LEFT);
+  const rightEdge = () => (nwGrid() ? 978 : RIGHT);
+  const COLORS = ['#000000', '#D10000', '#FEC800', '#0009D1', '#03D100'];   // Notewise-Stiftfarben
   const PAD_H = 150, PAD_LINE = 105;
 
   const SAMPLE_SENTENCES = [
@@ -202,7 +213,19 @@
     ctx.fillRect(x0, y0, w, h);
     const ls = opts.lineSpacing;
     ctx.lineWidth = Math.max(1, s * 0.8);
-    if (opts.paper === 'lined' || opts.paper === 'grid') {
+    if (opts.paper === 'nwgrid' && !opts.single) {
+      ctx.strokeStyle = '#d4d4d4';
+      ctx.lineWidth = Math.max(1, s * 0.9);
+      ctx.beginPath();
+      for (let p = pageOf(scrollY); (p * PAGE_H - scrollY) * s < h; p++) {
+        for (let y = p * PAGE_H + GRID_OFF; y < (p + 1) * PAGE_H; y += GRID) {
+          if ((y - scrollY) * s < 0 || (y - scrollY) * s > h) continue;
+          ctx.moveTo(x0, (y - scrollY) * s); ctx.lineTo(x0 + w, (y - scrollY) * s);
+        }
+      }
+      for (let x = GRID_OFF; x <= PAGE_W; x += GRID) { ctx.moveTo(x * s, 0); ctx.lineTo(x * s, h); }
+      ctx.stroke();
+    } else if (opts.paper === 'nwgrid' || opts.paper === 'lined' || opts.paper === 'grid') {
       ctx.strokeStyle = opts.paper === 'grid' ? '#dfe7f1' : '#c9d8ea';
       const first = opts.single ? opts.single : TOP;
       const step = opts.paper === 'grid' ? ls / 2 : ls;
@@ -328,7 +351,7 @@
         b.strokeStyle = '#2f5fd0'; b.lineWidth = 2;
         b.beginPath(); b.moveTo(this.marker.x, this.marker.y + 4); b.lineTo(this.marker.x, this.marker.y - st.lineSpacing * 0.75); b.stroke();
         b.fillStyle = 'rgba(47, 95, 208, .08)';
-        b.fillRect(this.marker.x, this.marker.y - st.lineSpacing * 0.8, RIGHT - this.marker.x, st.lineSpacing * 0.85);
+        b.fillRect(this.marker.x, this.marker.y - st.lineSpacing * 0.8, rightEdge() - this.marker.x, st.lineSpacing * 0.85);
       }
       this.present();
     }
@@ -491,9 +514,9 @@
 
   // ---------------- App-Zustand ----------------
   const state = {
-    settings: { paper: 'lined', lineSpacing: 40, finger: false, style: 'own', check: false },
+    settings: { paper: 'nwgrid', lineSpacing: GRID, finger: false, style: 'own', check: false, v: 2 },
     tool: 'pen',
-    color: '#1b2a4a',
+    color: '#000000',
     width: 2.1,
     notes: [],
     noteId: null,
@@ -619,9 +642,10 @@
   }
 
   // Text in Zeilen umbrechen; Zeichenbreite aus der Schriftprobe geschätzt
-  function layoutText(text, at, samples, right = RIGHT) {
+  function layoutText(text, at, samples, right = rightEdge()) {
     const charW = samples.reduce((a, s) => a + (s.charW || 11), 0) / samples.length;
-    const maxChars = Math.max(6, Math.min(70, Math.floor((right - at.x) / (charW * 1.08))));
+    // bis zum Zeilenende füllen (zu lange Zeilen staucht writeLines auf die verfügbare Breite)
+    const maxChars = Math.max(6, Math.min(140, Math.floor((right - at.x) / (charW * 1.02))));
     const lines = [];
     for (const para of text.replace(/\r/g, '').split('\n')) {
       const words = para.split(/\s+/).filter(Boolean);
@@ -648,7 +672,7 @@
   // nächste Linie; reicht sie über den unteren Rand der Seite, die erste Linie der nächsten Seite
   function nextLineY(y) {
     const ny = y + state.settings.lineSpacing, p = pageOf(y);
-    return ny > (p + 1) * PAGE_H - BOTTOM ? (p + 1) * PAGE_H + TOP : ny;
+    return ny > (p + 1) * PAGE_H - BOTTOM ? (p + 1) * PAGE_H + firstLine() : ny;
   }
 
   // Das Modell verliert bei langen Zeilen den Faden; daher in Stücke an Wortgrenzen teilen
@@ -672,7 +696,7 @@
     return out;
   }
 
-  async function writeLines(lines, samples, bias, ink, onLine, right = RIGHT, check = false) {
+  async function writeLines(lines, samples, bias, ink, onLine, right = rightEdge(), check = false) {
     const jobs = lines.map((ln, i) => {
       if (!ln.text.trim()) return Promise.resolve(null);
       const sample = samples[(i + Math.floor(Math.random() * samples.length)) % samples.length];
@@ -714,7 +738,7 @@
         page.render();
         done++;
         showStatus(`KI schreibt … ${done}/${total} Zeilen`);
-      }, RIGHT, check);
+      }, rightEdge(), check);
       if (all.length) pushAction({ type: 'add', strokes: all });
       showStatus(`Fertig (${((performance.now() - t0) / 1000).toFixed(1)} s)`, 2000);
     } catch (e) {
@@ -745,10 +769,10 @@
 
   // ---------------- Text-Werkzeug ----------------
   function snapToLine(p) {
-    const ls = state.settings.lineSpacing, pg = pageOf(p[1]);
-    const maxK = Math.floor((PAGE_H - BOTTOM - TOP) / ls);
-    const k = Math.min(maxK, Math.max(0, Math.round((p[1] - pg * PAGE_H - TOP) / ls + 0.35)));
-    return { x: Math.min(Math.max(p[0], LEFT), RIGHT - 120), y: pg * PAGE_H + TOP + k * ls };
+    const ls = state.settings.lineSpacing, pg = pageOf(p[1]), top = firstLine();
+    const maxK = Math.floor((PAGE_H - BOTTOM - top) / ls);
+    const k = Math.min(maxK, Math.max(0, Math.round((p[1] - pg * PAGE_H - top) / ls + 0.35)));
+    return { x: Math.min(Math.max(p[0], leftEdge()), rightEdge() - 120), y: pg * PAGE_H + top + k * ls };
   }
 
   function openTextPanel(p) {
@@ -963,10 +987,14 @@
 
   // ---------------- Start ----------------
   async function init() {
-    Object.assign(state.settings, (await Store.get('settings')) || {});
+    const saved = (await Store.get('settings')) || {};
+    // einmalig auf Notewise-Karo umstellen (vorher: liniert, Zeilenabstand 40)
+    if ((saved.v || 1) < 2) Object.assign(saved, { paper: 'nwgrid', lineSpacing: GRID, v: 2 });
+    Object.assign(state.settings, saved);
+    if (nwGrid()) state.settings.lineSpacing = GRID;
     state.samples = (await Store.get('samples')) || [];
     const ink = await Store.get('ink');
-    if (ink) { state.color = ink.color; state.width = ink.width; }
+    if (ink) { state.color = COLORS.includes(ink.color) ? ink.color : '#000000'; state.width = ink.width; }
 
     page = new Surface($('page'), {
       settings: () => state.settings,
@@ -1048,6 +1076,7 @@
     $('btnSettings').onclick = () => {
       $('setPaper').value = state.settings.paper;
       $('setLine').value = String(state.settings.lineSpacing);
+      $('setLine').disabled = nwGrid();
       $('setFinger').checked = state.settings.finger;
       $('setCheck').checked = state.settings.check;
       fillStyleSelect();
@@ -1055,7 +1084,14 @@
       $('settingsModal').hidden = false;
     };
     $('settingsClose').onclick = () => { $('settingsModal').hidden = true; };
-    $('setPaper').onchange = () => { state.settings.paper = $('setPaper').value; saveSettings(); };
+    $('setPaper').onchange = () => {
+      state.settings.paper = $('setPaper').value;
+      // Notewise-Karo: Zeilenabstand = ein Kästchen; sonst zurück auf „normal“
+      state.settings.lineSpacing = nwGrid() ? GRID : 40;
+      $('setLine').value = String(state.settings.lineSpacing);
+      $('setLine').disabled = nwGrid();
+      saveSettings();
+    };
     $('setLine').onchange = () => { state.settings.lineSpacing = +$('setLine').value; saveSettings(); };
     $('setFinger').onchange = () => { state.settings.finger = $('setFinger').checked; saveSettings(); };
     $('setCheck').onchange = async () => {

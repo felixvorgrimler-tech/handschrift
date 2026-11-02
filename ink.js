@@ -187,7 +187,8 @@
     const body = bodyHeight(c.map((p) => [p[0], -p[1], p[2]]));
     const xs = c.map((p) => p[0]);
     const unitsPerChar = (Math.max(...xs) - Math.min(...xs)) / preset.text.length;
-    const unitPx = (lineSpacing * 0.2) / Math.max(unitsPerChar, 1e-3);
+    // Breite je Zeichen = 0,214 Zeilenabstände, so wie in deinen Notewise-Notizen (gemessen an ~730 Zeilen)
+    const unitPx = (lineSpacing * 0.214) / Math.max(unitsPerChar, 1e-3);
     const charW = unitsPerChar * unitPx;
     return { text: preset.text, offsets: preset.offsets, unitPx, charW, bodyPx: body * unitPx, baselineDrop: null };
   }
