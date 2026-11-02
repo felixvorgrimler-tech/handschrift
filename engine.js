@@ -218,7 +218,64 @@
     }
   }
 
-  global.HWEngine = { Model };
+  // Lesbarkeit grob prüfen: die Attention zeigt, an welchem Buchstaben das Modell gerade schreibt.
+  // Übersprungene (kaum Punkte) oder verschmierte Buchstaben (sehr viele Punkte) und
+  // abgebrochene Zeilen ergeben Fehlerpunkte; 0 = unauffällig.
+  function legibilityPenalty(points, text) {
+    const n = text.length;
+    const cnt = new Array(n).fill(0);
+    let maxCi = -1;
+    for (const p of points) {
+      if (p[3] >= 0 && p[3] < n) cnt[p[3]]++;
+      if (p[3] > maxCi) maxCi = p[3];
+    }
+    const isLetter = (c) => /[\p{L}\p{N}]/u.test(c);
+    const letters = [];
+    for (let i = 0; i < n; i++) if (isLetter(text[i])) letters.push(cnt[i]);
+    letters.sort((x, y) => x - y);
+    const med = letters.length ? letters[letters.length >> 1] : 0;
+    let bad = 0;
+    for (let i = 0; i < n; i++) {
+      if (!isLetter(text[i])) continue;
+      // verschluckt: deutlich weniger Punkte als üblich; verschmiert: deutlich mehr
+      if (cnt[i] < Math.max(3, ('il1'.includes(text[i]) ? 0.25 : 0.35) * med)) bad += 1;
+      if (cnt[i] > 3.5 * med) bad += 1;
+    }
+    if (maxCi < n - 1) bad += 3;
+
+    // Form: Reste der Vorlage, Riesensprünge, Stück viel höher als eine Zeile (Modell-Einheiten)
+    let prior = 0, y = 0, yMin = 0, yMax = 0, wild = 0;
+    for (let i = 0; i < points.length; i++) {
+      const p = points[i];
+      if (p[3] < 0) prior++;
+      const penDown = i === 0 || points[i - 1][2] !== 1;
+      const len = Math.hypot(p[0], p[1]);
+      if (penDown && len > 8) wild++;
+      if (!penDown && Math.abs(p[1]) > 18) wild++;
+      y += p[1];
+      if (y < yMin) yMin = y;
+      if (y > yMax) yMax = y;
+    }
+    if (prior > 8) bad += 2;
+    bad += Math.min(wild, 3);
+    if (yMax - yMin > 48) bad += 3;   // echte Zeilen: Median 32, 95 % unter 44
+    return bad;
+  }
+
+  // mehrere Versuche, der lesbarste gewinnt (bricht ab, sobald einer unauffällig ist)
+  Model.prototype.generateBest = function (text, opts = {}) {
+    const tries = opts.tries || 6;
+    let best = null, bestPen = Infinity;
+    for (let k = 0; k < tries; k++) {
+      const pts = this.generate(text, opts);
+      const pen = legibilityPenalty(pts, text);
+      if (pen < bestPen) { best = pts; bestPen = pen; }
+      if (pen === 0) break;
+    }
+    return best;
+  };
+
+  global.HWEngine = { Model, legibilityPenalty };
 
   // Worker-Modus
   if (typeof WorkerGlobalScope !== 'undefined' && global instanceof WorkerGlobalScope) {
@@ -239,7 +296,7 @@
               primed.set(msg.prime.key, st);
             }
           }
-          const points = model.generate(msg.text, {
+          const points = model.generateBest(msg.text, {
             bias: msg.bias, primedState: st, primeText: msg.prime ? msg.prime.text : '',
           });
           global.postMessage({ type: 'result', id: msg.id, points });

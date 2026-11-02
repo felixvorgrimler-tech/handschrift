@@ -189,10 +189,16 @@
   // Punkte, die noch zur Vorlage gehören (Zeichenindex < 0), weglassen und seltene Riesensprünge begrenzen.
   function cleanPoints(points) {
     const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    // ganze Striche am Anfang verwerfen, die überwiegend noch zur Vorlage gehören
     let start = 0;
-    while (start < points.length && points[start][3] < 0) start++;
-    // angefangenen Strich der Vorlage bis zum nächsten Absetzen mit verwerfen
-    if (start > 0) while (start < points.length && points[start - 1][2] !== 1) start++;
+    while (start < points.length) {
+      let end = start;
+      while (end < points.length - 1 && points[end][2] !== 1) end++;
+      const n = end - start + 1;
+      const prior = points.slice(start, end + 1).filter((p) => p[3] < 0).length;
+      if (prior * 2 <= n) break;
+      start = end + 1;
+    }
     return points.slice(start).map((p, i, a) => {
       const penUp = i > 0 && a[i - 1][2] === 1;
       return penUp
@@ -216,8 +222,18 @@
     const meanY = pts.reduce((a, p) => a + p[1], 0) / pts.length;
     let drop = sample.baselineDrop;
     if (drop == null) {
-      const ys = pts.map((p) => p[1]).sort((a, b) => a - b);
-      drop = ys[Math.floor(ys.length * 0.8)] - meanY;
+      // Grundlinie: Median der tiefsten Punkte je Strich (die meisten Striche enden auf der Linie;
+      // Unterlängen sind in der Minderheit). Robuster als ein Prozentwert aller Punkte.
+      const bottoms = [];
+      let cur = -Infinity;
+      for (const p of pts) {
+        cur = Math.max(cur, p[1]);
+        if (p[2] === 1) { bottoms.push(cur); cur = -Infinity; }
+      }
+      if (cur > -Infinity) bottoms.push(cur);
+      bottoms.sort((a, b) => a - b);
+      drop = bottoms.length >= 3 ? bottoms[bottoms.length >> 1] - meanY
+        : (() => { const ys = pts.map((p) => p[1]).sort((a, b) => a - b); return ys[Math.floor(ys.length * 0.8)] - meanY; })();
     }
     pts = pts.map((p) => [p[0] - minX + origin.x, p[1] - meanY + origin.y - drop, p[2], p[3]]);
 

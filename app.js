@@ -96,7 +96,8 @@
           ]);
         }
         this.custom = custom ? { name: custom.name, primes: meta.primes || [], lines: meta.lines } : null;
-        Ink.setAlphabet(meta.alphabet);
+        // Zeichen, die das Modell nicht sauber kann (meta.avoid), schreibt die App selbst (Pünktchen, ss)
+        Ink.setAlphabet(meta.alphabet.filter((c) => !(meta.avoid || []).includes(c)));
         this.presets = await fetch('model/presets.json').then((r) => r.json());
         const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
         try {
@@ -162,7 +163,7 @@
               st = this.localPrimed.get(job.prime.key);
               if (!st) { st = this.local.prime(job.prime.offsets, job.prime.text); this.localPrimed.set(job.prime.key, st); }
             }
-            job.resolve(this.local.generate(job.text, { bias: job.bias, primedState: st, primeText: job.prime ? job.prime.text : '' }));
+            job.resolve(this.local.generateBest(job.text, { bias: job.bias, primedState: st, primeText: job.prime ? job.prime.text : '' }));
           } catch (e) { job.reject(e); }
           this.localBusy = false;
           this.pump();
@@ -605,7 +606,7 @@
   }
 
   // Das Modell verliert bei langen Zeilen den Faden; daher in Stücke an Wortgrenzen teilen
-  const MAX_SEGMENT = 34;
+  const MAX_SEGMENT = 22;
   function segments(text) {
     const out = [];
     let cur = '';

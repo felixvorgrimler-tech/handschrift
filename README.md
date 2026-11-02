@@ -22,10 +22,15 @@ Alles läuft am PC, die Daten liegen im ignorierten Ordner `daten/` und kommen n
 3. `tools/make_hwm.py model daten/meine-handschrift.hwm` packt das Modell plus echte Zeilen als Vorlage in eine Datei.
 4. Am Tablet: Einstellungen → „Eigenes Modell laden (.hwm)“. Die Datei bleibt nur im Browser des Tablets.
 
-Experimentell: `tools/train_hand.py` trainiert das Modell auf den abgeschriebenen Zeilen nach (PyTorch, GPU).
+Nachtraining: `tools/train_hand.py` trainiert das Modell auf den abgeschriebenen Zeilen nach (PyTorch, GPU).
 Notewise speichert die Punkte gleichmäßig entlang des Strichs, ohne Zeit; das Schreibtempo wird deshalb nach dem
-Zwei-Drittel-Potenzgesetz nachgebildet. Mit ~250 Zeilen ist das Ergebnis noch nicht besser als Modell + Vorlage
-(`tools/compare_models.py` erzeugt den Vergleich).
+Zwei-Drittel-Potenzgesetz nachgebildet. Erste Schicht und Attention („lesen“ den Text) bleiben eingefroren,
+sonst verlernt das Modell, dem Text zu folgen. Mit ~730 Zeilen schreibt es deutlich ähnlicher als Modell + Vorlage
+(`tools/compare_models.py` erzeugt den Vergleich). Umlaute/ß lernt es noch nicht; die schreibt die App selbst.
+
+Lesbarkeit in der App: Zeilen werden in Stücken von ~22 Zeichen erzeugt; jedes Stück wird geprüft (übersprungene
+oder verschmierte Buchstaben laut Attention, Reste der Vorlage, Riesensprünge, zu große Höhe) und bei Bedarf neu
+erzeugt (bis zu 6 Versuche).
 
 ## Grenzen
 

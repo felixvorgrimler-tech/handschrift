@@ -83,7 +83,7 @@ def retime(pts, dt_target, beta=0.5, ramp=0.5, eps=0.3):
     return np.stack([np.interp(tt, t, pts[:, 0]), np.interp(tt, t, pts[:, 1])], 1)
 
 
-RESAMPLE = 'tempo'   # 'tempo' = Tempo nachbilden, 'zeit' = Originalpunkte ausdünnen, 'weg' = gleichmäßig
+RESAMPLE = os.environ.get('HW_RESAMPLE', 'tempo')   # 'tempo' = Tempo nachbilden, 'zeit' = Originalpunkte ausdünnen, 'weg' = gleichmäßig
 
 
 def line_to_offsets(strokes, text):

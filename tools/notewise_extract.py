@@ -103,6 +103,39 @@ def split_lines(strokes):
     return [ln for ln in info if ln['strokes']]
 
 
+def height(ln):
+    ys = sorted(p[1] for s in ln['strokes'] for p in s)
+    return ys[int(len(ys) * 0.95)] - ys[int(len(ys) * 0.05)]
+
+
+def split_tall(lines, rounds=3):
+    """Zu hohe Zeilenblöcke (z. B. eingerückte Folgezeile bei Stichpunkten) an der größten
+    senkrechten Lücke zwischen den Strichmitten teilen. Reihenfolge der Striche bleibt erhalten."""
+    for _ in range(rounds):
+        line_h = median([height(l) for l in lines]) or 10
+        # Einzelzeilen-Höhe robust: unteres Drittel der Höhen
+        single = sorted(height(l) for l in lines)[max(0, len(lines) // 3 - 1)] if lines else line_h
+        out, changed = [], False
+        for ln in lines:
+            if height(ln) <= 1.6 * single or len(ln['strokes']) < 6:
+                out.append(ln); continue
+            big = sorted(cy_of(bbox(s)) for s in ln['strokes'] if max(bbox(s)[2] - bbox(s)[0], bbox(s)[3] - bbox(s)[1]) > 2.5)
+            if len(big) < 4:
+                out.append(ln); continue
+            gaps = [(b - a, (a + b) / 2) for a, b in zip(big, big[1:])]
+            g, cut = max(gaps)
+            if g < 0.45 * single:
+                out.append(ln); continue
+            top = {'y': 0, 'x0': ln['x0'], 'x1': ln['x1'], 'strokes': [s for s in ln['strokes'] if cy_of(bbox(s)) < cut]}
+            bot = {'y': 0, 'x0': ln['x0'], 'x1': ln['x1'], 'strokes': [s for s in ln['strokes'] if cy_of(bbox(s)) >= cut]}
+            out += [l for l in (top, bot) if l['strokes']]
+            changed = True
+        lines = out
+        if not changed:
+            break
+    return lines
+
+
 def line_ok(ln, line_h):
     """Grobe Plausibilitätsprüfung: lange, flache Fließtextzeile."""
     xs = [p[0] for s in ln['strokes'] for p in s]
@@ -130,7 +163,7 @@ def main(zpath, outdir, filters):
             strokes = page_strokes(page)
             if len(strokes) < MIN_STROKES:
                 continue
-            lines = split_lines(strokes)
+            lines = split_tall(split_lines(strokes))
             hs = []
             for ln in lines:
                 ys = sorted(p[1] for s in ln['strokes'] for p in s)

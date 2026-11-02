@@ -21,6 +21,6 @@ for it in val[:10]:
     if pid not in pages:
         pages[pid] = {str(l['n']): l for l in json.load(open(f'daten/seiten/{pid}.json'))['lines']}
     real.append({'id': it['id'], 'text': it['text'], 'strokes': pages[pid][n]['strokes']})
-json.dump({'primes': primes, 'val': real}, open('daten/vergleich_daten.json', 'w', encoding='utf-8'), ensure_ascii=False)
+json.dump({'primes': primes, 'val': real}, open(os.environ.get('HW_OUT', 'daten/vergleich_daten.json'), 'w', encoding='utf-8'), ensure_ascii=False)
 print('Vorlagen:', [p['text'] for p in primes])
 print('Vergleichszeilen:', [r['text'] for r in real])
