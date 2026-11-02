@@ -852,13 +852,39 @@
     const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
     const n = state.notes.find((x) => x.id === state.noteId);
     const name = ((n && n.title) || 'Notiz').replace(/[^\wäöüÄÖÜß -]/g, '') + '.png';
-    const file = new File([blob], name, { type: 'image/png' });
+    await shareFile(new File([blob], name, { type: 'image/png' }));
+  }
+
+  // Notewise: Seite 3508 × 4960 Einheiten (A4); die App-Seite ist PAGE_W breit, also gleicher Maßstab für
+  // x und y. Damit ist die Schrift so groß wie eigene Notewise-Schrift. Lange Notizen → mehrere Seiten.
+  const NW_W = 3508, NW_H = 4960;
+  async function exportNotewise() {
+    if (!page.strokes.length) { showStatus('Die Notiz ist leer', 1500); return; }
+    const k = NW_W / PAGE_W, pageH = NW_H / k;
+    const pages = [];
+    for (const s of page.strokes) {
+      const i = Math.max(0, Math.floor(s.pts[0][1] / pageH));
+      while (pages.length <= i) pages.push([]);
+      const width = Math.max(1, Math.round((s.width || 2.1) * k * 0.7));
+      pages[i].push({
+        pts: s.pts.map((p) => [p[0] * k, (p[1] - i * pageH) * k, p[2] ?? 0.7]),
+        color: s.color || '#000000',
+        widths: (p) => +(width * (0.7 + 0.45 * p[2])).toFixed(2),
+      });
+    }
+    const n = state.notes.find((x) => x.id === state.noteId);
+    const title = (n && n.title) || 'Notiz';
+    const blob = Notewise.build(title, pages.map((p) => p));
+    await shareFile(new File([blob], title.replace(/[^\wäöüÄÖÜß .-]/g, '') + '.notewise', { type: 'application/octet-stream' }));
+  }
+
+  async function shareFile(file) {
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; }
+      try { await navigator.share({ files: [file], title: file.name }); return; } catch (e) { if (e.name === 'AbortError') return; }
     }
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
+    a.href = URL.createObjectURL(file);
+    a.download = file.name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
@@ -950,7 +976,10 @@
       await openNote(n.id);
       $('drawer').hidden = true;
     };
-    $('btnExport').onclick = exportPNG;
+    $('btnExport').onclick = () => { $('exportModal').hidden = false; };
+    $('exportClose').onclick = () => { $('exportModal').hidden = true; };
+    $('exportPng').onclick = () => { $('exportModal').hidden = true; exportPNG(); };
+    $('exportNotewise').onclick = () => { $('exportModal').hidden = true; exportNotewise(); };
 
     $('textInput').addEventListener('input', updateTextWarn);
     $('textCancel').onclick = closeTextPanel;

@@ -8,7 +8,11 @@ Notiz-App fürs Tablet (Browser/PWA): Mit dem Stift schreiben und getippten Text
 - **Text-Werkzeug (T✍):** Auf eine Stelle tippen, Text eingeben, „In Handschrift schreiben“. Ein neuronales Netz (Graves-Handschriftsynthese: LSTM + Attention + Mixture Density Network) bekommt deine Proben als Stil-Vorlage und erzeugt neue Stiftstriche. Jeder Buchstabe fällt dabei jedes Mal etwas anders aus, kopiert wird nichts.
 - Die KI läuft **komplett im Browser auf dem Gerät** (Web Worker, eine Zeile pro CPU-Kern). Kein Server, keine Cloud. Notizen und Proben liegen in IndexedDB.
 - **Sorgfalt-Regler:** niedrig = lockerer und variabler, hoch = ordentlicher.
-- Stift mit Druckstärke, Radierer (auch über die Stifttaste), Rückgängig/Wiederholen, mehrere Notizen, Export als PNG (Teilen-Menü).
+- Stift mit Druckstärke, Radierer (auch über die Stifttaste), Rückgängig/Wiederholen, mehrere Notizen, Export als PNG oder **für Notewise** (Teilen-Menü).
+- **Export für Notewise (.notewise):** In Notewise importiert (auch in eine bestehende Notiz) wird die Schrift zu echten
+  Notewise-Strichen auf Notewise-Papier: radieren, verschieben, umfärben wie eigene Schrift. Das Format (ZIP mit
+  Base64-Protobuf je Notiz/Seite) ist aus einer Notewise-Exportdatei entschlüsselt, siehe `notewise.js`. A4-Seite
+  3508 × 4960 Einheiten, App-Seite 1000 breit, also Faktor 3,5.
 - Ist ein Stift erkannt, scrollt der Finger nur und zeichnet nicht (Handballen-Schutz).
 
 ## Eigene Handschrift aus Notewise (privat)

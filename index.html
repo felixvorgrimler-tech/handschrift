@@ -36,7 +36,7 @@
   </select>
   <div class="spacer"></div>
   <button id="btnHand" class="tb wide" title="Meine Handschrift">✍ Meine Handschrift</button>
-  <button id="btnExport" class="tb" title="Als Bild exportieren">⇪</button>
+  <button id="btnExport" class="tb" title="Exportieren">⇪</button>
   <button id="btnSettings" class="tb" title="Einstellungen">⚙</button>
 </header>
 
@@ -99,6 +99,20 @@
   </div>
 </div>
 
+<!-- Export -->
+<div id="exportModal" class="modal" hidden>
+  <div class="modal-box small">
+    <div class="modal-head">
+      <h2>Exportieren</h2>
+      <button id="exportClose" class="btn">Abbrechen</button>
+    </div>
+    <p><button id="exportNotewise" class="btn primary">Für Notewise (.notewise)</button></p>
+    <p class="hint small">In Notewise importieren (auch in eine bestehende Notiz): Die Schrift wird zu echten Notewise-Strichen
+      auf Notewise-Papier und lässt sich radieren, verschieben und umfärben wie deine eigene.</p>
+    <p><button id="exportPng" class="btn">Als Bild (PNG)</button></p>
+  </div>
+</div>
+
 <!-- Einstellungen -->
 <div id="settingsModal" class="modal" hidden>
   <div class="modal-box small">
@@ -141,6 +155,7 @@
 <script src="engine.js"></script>
 <script src="ink.js"></script>
 <script src="ocr.js"></script>
+<script src="notewise.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
