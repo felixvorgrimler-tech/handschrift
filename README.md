@@ -32,6 +32,10 @@ Lesbarkeit in der App: Zeilen werden in Stücken von ~22 Zeichen erzeugt; jedes 
 oder verschmierte Buchstaben laut Attention, Reste der Vorlage, Riesensprünge, zu große Höhe) und bei Bedarf neu
 erzeugt (bis zu 6 Versuche).
 
+**Gründlich prüfen** (Einstellungen): Jede Variante eines Stücks wird zusätzlich von einer deutschen Texterkennung
+gelesen (TrOCR, siehe `ocr/`), und die App nimmt die Variante, die am besten zum Text passt. Das kostet einmalig ca. 65 MB
+Download und macht das Schreiben etwa doppelt so langsam (am PC ~20 s für zwei Zeilen statt ~10 s).
+
 ## Grenzen
 
 - Das vortrainierte Modell kennt nur englische Zeichen. **Umlaute** werden als a/o/u geschrieben und die Pünktchen ergänzt. **ß** wird als „ss“ geschrieben, **Q/X/Z** als Großbuchstaben gibt es nicht und werden klein geschrieben. Nicht unterstützte Zeichen (z. B. @, €, %) werden ausgelassen.

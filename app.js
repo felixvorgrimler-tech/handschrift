@@ -132,6 +132,10 @@
         w.onmessage = (ev) => {
           const m = ev.data;
           if (m.type === 'ready') { clearTimeout(timer); res(slot); return; }
+          if (m.type === 'score') {   // Gründlich: Variante lesen lassen
+            OCR.score(m.seg, m.points).catch(() => 0).then((err) => w.postMessage({ type: 'scored', ask: m.ask, err }));
+            return;
+          }
           const p = this.pending.get(m.id);
           this.pending.delete(m.id);
           slot.busy = false;
@@ -143,11 +147,12 @@
     }
 
     // segments: Liste kurzer Textstücke einer Zeile, die nacheinander weitergeschrieben werden
-    generate(text, sample, bias, segments = null) {
+    // check: jede Variante per Texterkennung lesen lassen und die lesbarste nehmen (langsamer)
+    generate(text, sample, bias, segments = null, check = false) {
       return this.init().then(() => new Promise((resolve, reject) => {
         const id = this.nextId++;
         const prime = sample.offsets.length ? { key: sample.id, text: sample.text, offsets: sample.offsets } : null;
-        this.queue.push({ id, text, segments, prime, bias, resolve, reject });
+        this.queue.push({ id, text, segments, prime, bias, check, resolve, reject });
         this.pump();
       }));
     }
@@ -158,17 +163,19 @@
         const job = this.queue.shift();
         this.localBusy = true;
         setTimeout(() => {
-          try {
+          (async () => {
             let st = null;
             if (job.prime) {
               st = this.localPrimed.get(job.prime.key);
               if (!st) { st = this.local.prime(job.prime.offsets, job.prime.text); this.localPrimed.set(job.prime.key, st); }
             }
             const o = { bias: job.bias, primedState: st, primeText: job.prime ? job.prime.text : '' };
-            job.resolve(job.segments ? this.local.generateLine(job.segments, o) : this.local.generateBest(job.text, o));
-          } catch (e) { job.reject(e); }
-          this.localBusy = false;
-          this.pump();
+            if (job.check) o.score = (seg, pts) => OCR.score(seg, pts).catch(() => 0);
+            job.resolve(await (job.segments ? this.local.generateLine(job.segments, o) : this.local.generateBest(job.text, o)));
+          })().catch((e) => job.reject(e)).then(() => {
+            this.localBusy = false;
+            this.pump();
+          });
         }, 30);
         return;
       }
@@ -178,7 +185,7 @@
         const job = this.queue.shift();
         slot.busy = true;
         this.pending.set(job.id, job);
-        slot.w.postMessage({ type: 'generate', id: job.id, text: job.text, segments: job.segments, prime: job.prime, bias: job.bias });
+        slot.w.postMessage({ type: 'generate', id: job.id, text: job.text, segments: job.segments, prime: job.prime, bias: job.bias, check: job.check });
       }
     }
   }
@@ -459,7 +466,7 @@
 
   // ---------------- App-Zustand ----------------
   const state = {
-    settings: { paper: 'lined', lineSpacing: 40, finger: false, style: 'own' },
+    settings: { paper: 'lined', lineSpacing: 40, finger: false, style: 'own', check: false },
     tool: 'pen',
     color: '#1b2a4a',
     width: 2.1,
@@ -619,13 +626,13 @@
     return out;
   }
 
-  async function writeLines(lines, samples, bias, ink, onLine, right = RIGHT) {
+  async function writeLines(lines, samples, bias, ink, onLine, right = RIGHT, check = false) {
     const jobs = lines.map((ln, i) => {
       if (!ln.text.trim()) return Promise.resolve(null);
       const sample = samples[(i + Math.floor(Math.random() * samples.length)) % samples.length];
       // ganze Zeile in Modell-Zeichen; Stücke daraus, damit die Zeichenindizes zu dots passen
       const mt = Ink.toModelText(ln.text);
-      return engine.generate(mt.text, sample, bias, segments(mt.text)).then((points) => {
+      return engine.generate(mt.text, sample, bias, segments(mt.text), check).then((points) => {
         const res = Ink.pointsToStrokes(points, sample, mt.dots, { x: ln.x, y: ln.y }, Math.random, mt.text.length);
         const avail = right - ln.x;
         if (res.width > avail) {
@@ -643,6 +650,7 @@
   async function writeText(text, at) {
     const bias = +$('bias').value;
     await withEngine();
+    const check = state.settings.check && await loadOCR();
     const samples = activeSamples();
     const lines = layoutText(text, at, samples);
     page.ghosts = lines.filter((l) => l.text).map((l) => ({ ...l }));
@@ -660,7 +668,7 @@
         page.render();
         done++;
         showStatus(`KI schreibt … ${done}/${total} Zeilen`);
-      });
+      }, RIGHT, check);
       if (all.length) pushAction({ type: 'add', strokes: all });
       showStatus(`Fertig (${((performance.now() - t0) / 1000).toFixed(1)} s)`, 2000);
     } catch (e) {
@@ -674,6 +682,19 @@
   async function withEngine() {
     if (!engine.presets) showStatus('KI wird geladen …');
     await engine.init();
+  }
+
+  // Texterkennung für „Gründlich prüfen“ (beim ersten Mal ca. 65 MB, danach aus dem Cache)
+  async function loadOCR() {
+    showStatus('Texterkennung wird geladen …');
+    try {
+      await OCR.load();
+      return true;
+    } catch (e) {
+      console.warn('Texterkennung nicht verfügbar', e);
+      showStatus('Texterkennung nicht verfügbar, schreibe ohne Prüfung', 3000);
+      return false;
+    }
   }
 
   // ---------------- Text-Werkzeug ----------------
@@ -950,6 +971,7 @@
       $('setPaper').value = state.settings.paper;
       $('setLine').value = String(state.settings.lineSpacing);
       $('setFinger').checked = state.settings.finger;
+      $('setCheck').checked = state.settings.check;
       fillStyleSelect();
       updateModelInfo();
       $('settingsModal').hidden = false;
@@ -958,6 +980,11 @@
     $('setPaper').onchange = () => { state.settings.paper = $('setPaper').value; saveSettings(); };
     $('setLine').onchange = () => { state.settings.lineSpacing = +$('setLine').value; saveSettings(); };
     $('setFinger').onchange = () => { state.settings.finger = $('setFinger').checked; saveSettings(); };
+    $('setCheck').onchange = async () => {
+      state.settings.check = $('setCheck').checked;
+      saveSettings();
+      if (state.settings.check && await loadOCR()) showStatus('Texterkennung bereit', 1500);
+    };
     $('setStyle').onchange = () => { state.settings.style = $('setStyle').value; saveSettings(); };
     $('modelFile').onchange = async () => {
       const f = $('modelFile').files[0];

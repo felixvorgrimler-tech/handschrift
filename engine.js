@@ -296,15 +296,15 @@
   // Vorlage fortgesetzt. So bleiben Größe, Grundlinie und Wortabstand durchgehend gleich, und
   // das Modell verliert trotzdem nicht bei langen Zeilen den Faden.
   // Rückgabe: Punkte [dx, dy, eos, Zeichenindex in der ganzen Zeile]
+  // Mit opts.score (async (stück, punkte) → Fehlerquote 0..1 laut Texterkennung) wird jede Variante
+  // gelesen und die am besten lesbare genommen; dann ist das Ergebnis ein Promise.
   Model.prototype.generateLine = function (segments, opts = {}) {
     let state = opts.primedState || null, primeText = opts.primeText || '';
     const out = [];
-    let ciOff = 0;
-    for (let k = 0; k < segments.length; k++) {
+    let ciOff = 0, k = 0;
+    const add = (pts) => {
       const seg = segments[k];
-      // Beim Weiterschreiben gehört der Anfang zum ersten Buchstaben, auch wenn die Attention
-      // noch kurz auf dem Leerzeichen davor steht: dort nichts wegwerfen.
-      const pts = this.generateBest(seg, { bias: opts.bias, primedState: state, primeText, continued: k > 0 }) || [];
+      pts = pts || [];
       if (out.length) out[out.length - 1][2] = 1;   // Stift absetzen zwischen den Stücken
       for (const p of pts) out.push([p[0], p[1], p[2], p[3] >= 0 ? p[3] + ciOff : -1, k]);
       ciOff += seg.length + 1;
@@ -314,8 +314,32 @@
         state = this.prime(prime, seg);
         primeText = seg;
       }
+      k++;
+    };
+    // Beim Weiterschreiben gehört der Anfang zum ersten Buchstaben, auch wenn die Attention
+    // noch kurz auf dem Leerzeichen davor steht: dort nichts wegwerfen.
+    const o = () => ({ bias: opts.bias, primedState: state, primeText, continued: k > 0 });
+    if (!opts.score) {
+      while (k < segments.length) add(this.generateBest(segments[k], o()));
+      return out;
     }
-    return out;
+    return (async () => {
+      while (k < segments.length) {
+        const seg = segments[k], oo = o();
+        let best = null, bestScore = Infinity, bestErr = 1;
+        // 4 Versuche; ist danach noch keiner gut lesbar (> 15 % falsch gelesen), 2 weitere
+        for (let t = 0; t < (bestErr > 0.15 ? 6 : 4); t++) {
+          const pts = this.generate(seg, oo);
+          const pen = legibilityPenalty(pts, seg, oo.continued);
+          const err = await opts.score(seg, pts);
+          const s = err + 0.03 * pen;
+          if (s < bestScore) { best = pts; bestScore = s; bestErr = err; }
+          if (err === 0 && pen <= 2) break;
+        }
+        add(best);
+      }
+      return out;
+    })();
   };
 
   global.HWEngine = { Model, legibilityPenalty };
@@ -324,8 +348,22 @@
   if (typeof WorkerGlobalScope !== 'undefined' && global instanceof WorkerGlobalScope) {
     let model = null;
     const primed = new Map();
-    global.onmessage = (ev) => {
+    // Gründlich: Varianten zum Lesen an den Hauptthread schicken, Antwort = Fehlerquote
+    const scores = new Map();
+    let nextAsk = 1;
+    const askScore = (id) => (seg, pts) => new Promise((res) => {
+      const ask = nextAsk++;
+      scores.set(ask, res);
+      global.postMessage({ type: 'score', id, ask, seg, points: pts });
+    });
+    global.onmessage = async (ev) => {
       const msg = ev.data;
+      if (msg.type === 'scored') {
+        const res = scores.get(msg.ask);
+        scores.delete(msg.ask);
+        if (res) res(msg.err);
+        return;
+      }
       try {
         if (msg.type === 'init') {
           model = new Model(msg.buffer, msg.meta);
@@ -340,7 +378,8 @@
             }
           }
           const o = { bias: msg.bias, primedState: st, primeText: msg.prime ? msg.prime.text : '' };
-          const points = msg.segments ? model.generateLine(msg.segments, o) : model.generateBest(msg.text, o);
+          if (msg.check) o.score = askScore(msg.id);
+          const points = msg.segments ? await model.generateLine(msg.segments, o) : model.generateBest(msg.text, o);
           global.postMessage({ type: 'result', id: msg.id, points });
         } else if (msg.type === 'forget') {
           primed.clear();

@@ -1,7 +1,7 @@
 // Offline-Cache: App-Dateien und Modell einmal laden, danach ohne Internet nutzbar.
-const CACHE = 'handschrift-v5';
+const CACHE = 'handschrift-v6';
 const FILES = [
-  './', 'index.html', 'styles.css', 'app.js', 'engine.js', 'ink.js', 'icon.svg', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'app.js', 'engine.js', 'ink.js', 'ocr.js', 'icon.svg', 'manifest.webmanifest',
   'model/meta.json', 'model/weights.bin', 'model/presets.json',
 ];
 
@@ -19,7 +19,9 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
     fetch(e.request).then((r) => {
-      if (r.ok && new URL(e.request.url).origin === location.origin) {
+      // eigene Dateien und die Texterkennungs-Bibliothek (jsdelivr) für offline merken
+      const u = new URL(e.request.url);
+      if (r.ok && (u.origin === location.origin || u.hostname === 'cdn.jsdelivr.net')) {
         const copy = r.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
       }
