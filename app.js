@@ -6,6 +6,10 @@
   const TOP = 90;             // erste Linie
   const LEFT = 70;            // Rand links (Text-Einfügen)
   const RIGHT = 965;          // Rand rechts
+  // Seiten im A4-Format wie in Notewise (3508 × 4960): eine App-Seite wird genau eine Notewise-Seite
+  const PAGE_H = Math.round(PAGE_W * 4960 / 3508);   // 1414
+  const BOTTOM = 60;          // unterer Rand: keine Linie tiefer als PAGE_H − BOTTOM
+  const pageOf = (y) => Math.max(0, Math.floor(y / PAGE_H));
   const PAD_H = 150, PAD_LINE = 105;
 
   const SAMPLE_SENTENCES = [
@@ -202,14 +206,19 @@
       ctx.strokeStyle = opts.paper === 'grid' ? '#dfe7f1' : '#c9d8ea';
       const first = opts.single ? opts.single : TOP;
       const step = opts.paper === 'grid' ? ls / 2 : ls;
-      const startY = opts.single ? first : first - Math.floor((first - scrollY) / step) * step - step;
       ctx.beginPath();
       if (opts.single) {
         ctx.moveTo(x0, (first - scrollY) * s); ctx.lineTo(x0 + w, (first - scrollY) * s);
       } else {
-        for (let y = startY; (y - scrollY) * s < h; y += step) {
-          if ((y - scrollY) * s < 0) continue;
-          ctx.moveTo(x0, (y - scrollY) * s); ctx.lineTo(x0 + w, (y - scrollY) * s);
+        // Linien je Seite: ab TOP bis zum unteren Rand (bei kariert durchgehend im Raster)
+        for (let p = pageOf(scrollY); (p * PAGE_H - scrollY) * s < h; p++) {
+          const y0p = p * PAGE_H, y1p = (p + 1) * PAGE_H;
+          const from = opts.paper === 'grid' ? y0p + (TOP % step) : y0p + TOP;
+          const to = opts.paper === 'grid' ? y1p : y1p - BOTTOM;
+          for (let y = from; y <= to; y += step) {
+            if ((y - scrollY) * s < 0 || (y - scrollY) * s > h) continue;
+            ctx.moveTo(x0, (y - scrollY) * s); ctx.lineTo(x0 + w, (y - scrollY) * s);
+          }
         }
         if (opts.paper === 'grid') {
           for (let x = 0; x <= PAGE_W; x += step) { ctx.moveTo(x * s, 0); ctx.lineTo(x * s, h); }
@@ -220,6 +229,19 @@
     if (opts.paper === 'lined' && !opts.single) {
       ctx.strokeStyle = '#f2c4c4';
       ctx.beginPath(); ctx.moveTo((LEFT - 12) * s, 0); ctx.lineTo((LEFT - 12) * s, h); ctx.stroke();
+    }
+    // Seitenwechsel: grauer Streifen mit Seitenzahl
+    if (!opts.single && !opts.noBreaks) {
+      for (let p = Math.max(1, pageOf(scrollY)); (p * PAGE_H - scrollY) * s < h + 20 * s; p++) {
+        const y = (p * PAGE_H - scrollY) * s;
+        ctx.fillStyle = '#e4e0d6';
+        ctx.fillRect(x0, y - 4 * s, w, 8 * s);
+        ctx.fillStyle = '#9a958a';
+        ctx.font = `${12 * s}px system-ui, sans-serif`;
+        ctx.textAlign = 'right';
+        ctx.fillText(`Seite ${p + 1}`, x0 + w - 12 * s, y + 18 * s);
+        ctx.textAlign = 'left';
+      }
     }
   }
 
@@ -270,7 +292,9 @@
 
     scrollBy(dy) {
       if (this.opts.fixedHeight) return;
-      const maxY = Math.max(0, this.contentBottom() + 400 - this.canvas.clientHeight / this.zoom);
+      // bis zum Ende der Seite mit dem letzten Strich und noch ein Stück in die nächste (dort weiterschreiben)
+      const end = Math.max(this.contentBottom() + 400, (pageOf(this.contentBottom()) + 1) * PAGE_H + 300);
+      const maxY = Math.max(0, end - this.canvas.clientHeight / this.zoom);
       this.scrollY = Math.min(Math.max(0, this.scrollY + dy), Math.max(maxY, this.scrollY));
       if (this.scrollY < 0) this.scrollY = 0;
       this.render();
@@ -612,7 +636,19 @@
       }
       if (cur) lines.push(cur);
     }
-    return lines.map((t, i) => ({ text: t, x: at.x, y: at.y + i * state.settings.lineSpacing }));
+    const out = [];
+    let y = at.y;
+    for (const t of lines) {
+      out.push({ text: t, x: at.x, y });
+      y = nextLineY(y);
+    }
+    return out;
+  }
+
+  // nächste Linie; reicht sie über den unteren Rand der Seite, die erste Linie der nächsten Seite
+  function nextLineY(y) {
+    const ny = y + state.settings.lineSpacing, p = pageOf(y);
+    return ny > (p + 1) * PAGE_H - BOTTOM ? (p + 1) * PAGE_H + TOP : ny;
   }
 
   // Das Modell verliert bei langen Zeilen den Faden; daher in Stücke an Wortgrenzen teilen
@@ -709,9 +745,10 @@
 
   // ---------------- Text-Werkzeug ----------------
   function snapToLine(p) {
-    const ls = state.settings.lineSpacing;
-    const k = Math.max(0, Math.round((p[1] - TOP) / ls + 0.35));
-    return { x: Math.min(Math.max(p[0], LEFT), RIGHT - 120), y: TOP + k * ls };
+    const ls = state.settings.lineSpacing, pg = pageOf(p[1]);
+    const maxK = Math.floor((PAGE_H - BOTTOM - TOP) / ls);
+    const k = Math.min(maxK, Math.max(0, Math.round((p[1] - pg * PAGE_H - TOP) / ls + 0.35)));
+    return { x: Math.min(Math.max(p[0], LEFT), RIGHT - 120), y: pg * PAGE_H + TOP + k * ls };
   }
 
   function openTextPanel(p) {
@@ -818,7 +855,7 @@
       cv.width = cv.clientWidth * dpr; cv.height = H * zoom * dpr;
       const ctx = cv.getContext('2d');
       const s = zoom * dpr;
-      drawPaper(ctx, s, 0, 0, cv.width, cv.height, 0, { paper: 'lined', lineSpacing: ls, single: null });
+      drawPaper(ctx, s, 0, 0, cv.width, cv.height, 0, { paper: 'lined', lineSpacing: ls, single: null, noBreaks: true });
       ctx.fillStyle = '#7a7466'; ctx.font = `${13 * dpr}px system-ui`;
       ctx.fillText('KI schreibt …', 10 * dpr, 20 * dpr);
       ctx.setTransform(s, 0, 0, s, 0, 0);
@@ -860,10 +897,12 @@
   const NW_W = 3508, NW_H = 4960;
   async function exportNotewise() {
     if (!page.strokes.length) { showStatus('Die Notiz ist leer', 1500); return; }
-    const k = NW_W / PAGE_W, pageH = NW_H / k;
+    const k = NW_W / PAGE_W, pageH = PAGE_H;
     const pages = [];
     for (const s of page.strokes) {
-      const i = Math.max(0, Math.floor(s.pts[0][1] / pageH));
+      // Seite nach der Mitte des Strichs (eigene Striche können über einen Seitenwechsel reichen)
+      const bb = s.bounds || Ink.strokeBounds(s);
+      const i = pageOf((bb.y0 + bb.y1) / 2);
       while (pages.length <= i) pages.push([]);
       const width = Math.max(1, Math.round((s.width || 2.1) * k * 0.7));
       pages[i].push({

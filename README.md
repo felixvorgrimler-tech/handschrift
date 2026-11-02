@@ -13,6 +13,8 @@ Notiz-App fürs Tablet (Browser/PWA): Mit dem Stift schreiben und getippten Text
   Notewise-Strichen auf Notewise-Papier: radieren, verschieben, umfärben wie eigene Schrift. Das Format (ZIP mit
   Base64-Protobuf je Notiz/Seite) ist aus einer Notewise-Exportdatei entschlüsselt, siehe `notewise.js`. A4-Seite
   3508 × 4960 Einheiten, App-Seite 1000 breit, also Faktor 3,5.
+- **Seiten im A4-Format** wie in Notewise (1000 × 1414 Einheiten): Seitenwechsel sind in der Notiz zu sehen, eingefügter
+  Text springt am Seitenende auf die erste Linie der nächsten Seite, und jede Seite wird beim Export eine Notewise-Seite.
 - Ist ein Stift erkannt, scrollt der Finger nur und zeichnet nicht (Handballen-Schutz).
 
 ## Eigene Handschrift aus Notewise (privat)
