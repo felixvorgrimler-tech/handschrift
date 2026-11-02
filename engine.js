@@ -248,16 +248,33 @@
     for (let i = 0; i < points.length; i++) {
       const p = points[i];
       if (p[3] < 0) prior++;
-      const penDown = i === 0 || points[i - 1][2] !== 1;
+      // der erste Weg führt von der Vorlage zum Textanfang und ist kein Ausreißer
+      const penDown = i > 0 && points[i - 1][2] !== 1;
       const len = Math.hypot(p[0], p[1]);
-      if (penDown && len > 8) wild++;
-      if (!penDown && Math.abs(p[1]) > 18) wild++;
+      if (i > 0 && penDown && len > 8) wild++;
+      if (i > 0 && !penDown && Math.abs(p[1]) > 18) wild++;
       y += p[1];
       if (y < yMin) yMin = y;
       if (y > yMax) yMax = y;
     }
     if (prior > 8) bad += 2;
     bad += Math.min(wild, 3);
+
+    // verrutschte Striche: Strich (nicht Punkt/Querstrich) schwebt klar über bzw. liegt unter der Grundlinie
+    const ext = [];
+    let sy = 0, lo = Infinity, hi = -Infinity;
+    for (const p of points) {
+      sy += p[1];
+      lo = Math.min(lo, sy); hi = Math.max(hi, sy);   // y nach oben
+      if (p[2] === 1) { ext.push([lo, hi]); lo = Infinity; hi = -Infinity; }
+    }
+    if (lo < Infinity) ext.push([lo, hi]);
+    const tall = ext.filter((e) => e[1] - e[0] > 4);
+    if (tall.length >= 4) {
+      const b = tall.map((e) => e[0]).sort((u, v) => u - v)[tall.length >> 1];   // Grundlinie
+      const off = tall.filter((e) => e[0] > b + 12 || e[1] < b - 6).length;   // bei echten Zeilen 11 % Treffer
+      if (off >= 1) bad += 2 * off;
+    }
     if (yMax - yMin > 48) bad += 3;   // echte Zeilen: Median 32, 95 % unter 44
     return bad;
   }
@@ -273,6 +290,49 @@
       if (pen === 0) break;
     }
     return best;
+  };
+
+  // Striche am Anfang, die überwiegend noch zur Vorlage gehören, entfernen; ihre Verschiebung
+  // bleibt erhalten, damit der Rest an der richtigen Stelle steht
+  function dropResidue(pts) {
+    let start = 0;
+    while (start < pts.length) {
+      let end = start;
+      while (end < pts.length - 1 && pts[end][2] !== 1) end++;
+      const prior = pts.slice(start, end + 1).filter((p) => p[3] < 0).length;
+      if (prior * 2 <= end - start + 1) break;
+      start = end + 1;
+    }
+    if (start === 0) return pts;
+    const rest = pts.slice(start).map((p) => p.slice());
+    if (rest.length) {
+      for (let i = 0; i < start; i++) { rest[0][0] += pts[i][0]; rest[0][1] += pts[i][1]; }
+    }
+    return rest;
+  }
+
+  // Eine Zeile aus mehreren kurzen Stücken: jedes Stück wird mit dem zuvor Geschriebenen als
+  // Vorlage fortgesetzt. So bleiben Größe, Grundlinie und Wortabstand durchgehend gleich, und
+  // das Modell verliert trotzdem nicht bei langen Zeilen den Faden.
+  // Rückgabe: Punkte [dx, dy, eos, Zeichenindex in der ganzen Zeile]
+  Model.prototype.generateLine = function (segments, opts = {}) {
+    let state = opts.primedState || null, primeText = opts.primeText || '';
+    const out = [];
+    let ciOff = 0;
+    for (let k = 0; k < segments.length; k++) {
+      const seg = segments[k];
+      const pts = dropResidue(this.generateBest(seg, { bias: opts.bias, primedState: state, primeText }) || []);
+      if (out.length) out[out.length - 1][2] = 1;   // Stift absetzen zwischen den Stücken
+      for (const p of pts) out.push([p[0], p[1], p[2], p[3] >= 0 ? p[3] + ciOff : -1]);
+      ciOff += seg.length + 1;
+      if (k < segments.length - 1 && pts.length > 5) {
+        const prime = [[0, 0, 1]].concat(pts.map((p) => [p[0], p[1], p[2]]));
+        prime[prime.length - 1][2] = 1;
+        state = this.prime(prime, seg);
+        primeText = seg;
+      }
+    }
+    return out;
   };
 
   global.HWEngine = { Model, legibilityPenalty };
@@ -296,9 +356,8 @@
               primed.set(msg.prime.key, st);
             }
           }
-          const points = model.generateBest(msg.text, {
-            bias: msg.bias, primedState: st, primeText: msg.prime ? msg.prime.text : '',
-          });
+          const o = { bias: msg.bias, primedState: st, primeText: msg.prime ? msg.prime.text : '' };
+          const points = msg.segments ? model.generateLine(msg.segments, o) : model.generateBest(msg.text, o);
           global.postMessage({ type: 'result', id: msg.id, points });
         } else if (msg.type === 'forget') {
           primed.clear();

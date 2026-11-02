@@ -142,11 +142,12 @@
       });
     }
 
-    generate(text, sample, bias) {
+    // segments: Liste kurzer Textstücke einer Zeile, die nacheinander weitergeschrieben werden
+    generate(text, sample, bias, segments = null) {
       return this.init().then(() => new Promise((resolve, reject) => {
         const id = this.nextId++;
         const prime = sample.offsets.length ? { key: sample.id, text: sample.text, offsets: sample.offsets } : null;
-        this.queue.push({ id, text, prime, bias, resolve, reject });
+        this.queue.push({ id, text, segments, prime, bias, resolve, reject });
         this.pump();
       }));
     }
@@ -163,7 +164,8 @@
               st = this.localPrimed.get(job.prime.key);
               if (!st) { st = this.local.prime(job.prime.offsets, job.prime.text); this.localPrimed.set(job.prime.key, st); }
             }
-            job.resolve(this.local.generateBest(job.text, { bias: job.bias, primedState: st, primeText: job.prime ? job.prime.text : '' }));
+            const o = { bias: job.bias, primedState: st, primeText: job.prime ? job.prime.text : '' };
+            job.resolve(job.segments ? this.local.generateLine(job.segments, o) : this.local.generateBest(job.text, o));
           } catch (e) { job.reject(e); }
           this.localBusy = false;
           this.pump();
@@ -176,7 +178,7 @@
         const job = this.queue.shift();
         slot.busy = true;
         this.pending.set(job.id, job);
-        slot.w.postMessage({ type: 'generate', id: job.id, text: job.text, prime: job.prime, bias: job.bias });
+        slot.w.postMessage({ type: 'generate', id: job.id, text: job.text, segments: job.segments, prime: job.prime, bias: job.bias });
       }
     }
   }
@@ -621,24 +623,16 @@
     const jobs = lines.map((ln, i) => {
       if (!ln.text.trim()) return Promise.resolve(null);
       const sample = samples[(i + Math.floor(Math.random() * samples.length)) % samples.length];
-      const segs = segments(ln.text).map((t) => ({ t, mt: Ink.toModelText(t) }));
-      return Promise.all(segs.map((sg) => engine.generate(sg.mt.text, sample, bias))).then((results) => {
-        // Stücke nebeneinander setzen, mit einem Wortabstand dazwischen
-        const gap = (sample.charW || 11) * 0.85;
-        let x = ln.x;
-        let all = [];
-        results.forEach((points, k) => {
-          const res = Ink.pointsToStrokes(points, sample, segs[k].mt.dots, { x, y: ln.y });
-          all = all.concat(res.strokes);
-          x += res.width + gap * (0.8 + Math.random() * 0.4);
-        });
-        const width = x - ln.x;
+      // ganze Zeile in Modell-Zeichen; Stücke daraus, damit die Zeichenindizes zu dots passen
+      const mt = Ink.toModelText(ln.text);
+      return engine.generate(mt.text, sample, bias, segments(mt.text)).then((points) => {
+        const res = Ink.pointsToStrokes(points, sample, mt.dots, { x: ln.x, y: ln.y });
         const avail = right - ln.x;
-        if (width > avail) {
-          const f = avail / width;
-          for (const s of all) for (const p of s.pts) p[0] = ln.x + (p[0] - ln.x) * f;
+        if (res.width > avail) {
+          const f = avail / res.width;
+          for (const s of res.strokes) for (const p of s.pts) p[0] = ln.x + (p[0] - ln.x) * f;
         }
-        const strokes = all.map((s) => ({ id: uid(), pts: s.pts.map((p) => [+p[0].toFixed(2), +p[1].toFixed(2), +p[2].toFixed(2)]), color: ink.color, width: ink.width }));
+        const strokes = res.strokes.map((s) => ({ id: uid(), pts: s.pts.map((p) => [+p[0].toFixed(2), +p[1].toFixed(2), +p[2].toFixed(2)]), color: ink.color, width: ink.width }));
         onLine(ln, strokes);
         return strokes;
       });

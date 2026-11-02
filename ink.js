@@ -76,7 +76,8 @@
   }
 
   // Regressionsgerade durch alle Punkte -> drehen, sodass die Zeile waagerecht liegt
-  function align(coords) {
+  // maxDeg: Drehung begrenzen (null = volle Korrektur wie in den Trainingsdaten)
+  function align(coords, maxDeg = null) {
     const n = coords.length;
     let mx = 0, my = 0;
     for (const p of coords) { mx += p[0]; my += p[1]; }
@@ -85,7 +86,9 @@
     for (const p of coords) { sxy += (p[0] - mx) * (p[1] - my); sxx += (p[0] - mx) ** 2; }
     const slope = sxx ? sxy / sxx : 0;
     const offset = my - slope * mx;
-    const th = Math.atan(slope), co = Math.cos(th), si = Math.sin(th);
+    let th = Math.atan(slope);
+    if (maxDeg != null) th = Math.max(-maxDeg, Math.min(maxDeg, th * 180 / Math.PI)) * Math.PI / 180;
+    const co = Math.cos(th), si = Math.sin(th);
     return coords.map((p) => [p[0] * co + p[1] * si, -p[0] * si + p[1] * co - offset, p[2]]);
   }
 
@@ -176,11 +179,13 @@
   function presetSample(preset, lineSpacing) {
     const c = offsetsToCoords(preset.offsets);
     const ys = c.map((p) => p[1]).sort((a, b) => a - b);
-    const h = ys[Math.floor(ys.length * 0.9)] - ys[Math.floor(ys.length * 0.1)];
-    const unitPx = (lineSpacing * 0.55) / Math.max(h, 1);
+    // Schriftkörper (mittlere 50 % der Punkte) soll etwa ein Fünftel des Zeilenabstands hoch sein,
+    // dann bleiben Ober- und Unterlängen innerhalb der Zeile
+    const body = ys[Math.floor(ys.length * 0.75)] - ys[Math.floor(ys.length * 0.25)];
+    const unitPx = (lineSpacing * 0.21) / Math.max(body, 1e-3);
     const xs = c.map((p) => p[0]);
     const charW = (Math.max(...xs) - Math.min(...xs)) * unitPx / preset.text.length;
-    return { text: preset.text, offsets: preset.offsets, unitPx, charW, baselineDrop: null };
+    return { text: preset.text, offsets: preset.offsets, unitPx, charW, bodyPx: body * unitPx, baselineDrop: null };
   }
 
   // ---------- Modell-Ausgabe -> Seitenstriche ----------
@@ -202,9 +207,34 @@
     return points.slice(start).map((p, i, a) => {
       const penUp = i > 0 && a[i - 1][2] === 1;
       return penUp
-        ? [clamp(p[0], -12, 25), clamp(p[1], -10, 10), p[2], p[3]]
+        ? [clamp(p[0], -25, 30), clamp(p[1], -20, 20), p[2], p[3]]   // Ausreißer fängt die Lesbarkeits-Prüfung ab
         : [clamp(p[0], -8, 8), clamp(p[1], -8, 8), p[2], p[3]];
     });
+  }
+
+  // Striche einer Punktliste ([x, y(nach unten), eos, ...]) als Liste von {top, bottom, h}
+  function strokeExtents(pts) {
+    const out = [];
+    let top = Infinity, bottom = -Infinity;
+    for (const p of pts) {
+      top = Math.min(top, p[1]); bottom = Math.max(bottom, p[1]);
+      if (p[2] === 1) { out.push({ top, bottom, h: bottom - top }); top = Infinity; bottom = -Infinity; }
+    }
+    if (top < Infinity) out.push({ top, bottom, h: bottom - top });
+    return out;
+  }
+
+  function baselineOf(pts) {
+    const ext = strokeExtents(pts);
+    const big = ext.filter((e) => e.h > 0);
+    const bottoms = (big.length >= 3 ? big : ext).map((e) => e.bottom).sort((a, b) => a - b);
+    return bottoms.length ? bottoms[bottoms.length >> 1] : 0;
+  }
+
+  // Höhe des Schriftkörpers: mittlere 50 % aller Punkte (unabhängig von Ober-/Unterlängen-Anteil)
+  function bodyHeight(pts) {
+    const ys = pts.map((p) => p[1]).sort((a, b) => a - b);
+    return Math.max(1e-3, ys[Math.floor(ys.length * 0.75)] - ys[Math.floor(ys.length * 0.25)]);
   }
 
   function pointsToStrokes(points, sample, dots, origin, rng = Math.random) {
@@ -214,28 +244,22 @@
     let coords = offsetsToCoords(points);
     const charOf = coords.map((p) => p[3]);
     coords = denoise(coords.map((p) => [p[0], p[1], p[2]]));
-    coords = align(coords);
+    // Bei kurzen Stücken ist die geschätzte Schräglage unzuverlässig: nur leicht gerade drehen,
+    // damit nebeneinanderstehende Stücke nicht unterschiedlich kippen.
+    coords = align(coords, 2.5);
     const s = sample.unitPx;
     // y umdrehen (Modell: y nach oben)
     let pts = coords.map((p, i) => [p[0] * s, -p[1] * s, p[2], charOf[i]]);
     const minX = Math.min(...pts.map((p) => p[0]));
-    const meanY = pts.reduce((a, p) => a + p[1], 0) / pts.length;
-    let drop = sample.baselineDrop;
-    if (drop == null) {
-      // Grundlinie: Median der tiefsten Punkte je Strich (die meisten Striche enden auf der Linie;
-      // Unterlängen sind in der Minderheit). Robuster als ein Prozentwert aller Punkte.
-      const bottoms = [];
-      let cur = -Infinity;
-      for (const p of pts) {
-        cur = Math.max(cur, p[1]);
-        if (p[2] === 1) { bottoms.push(cur); cur = -Infinity; }
-      }
-      if (cur > -Infinity) bottoms.push(cur);
-      bottoms.sort((a, b) => a - b);
-      drop = bottoms.length >= 3 ? bottoms[bottoms.length >> 1] - meanY
-        : (() => { const ys = pts.map((p) => p[1]).sort((a, b) => a - b); return ys[Math.floor(ys.length * 0.8)] - meanY; })();
+    // Größe angleichen: jedes Stück auf die Mittellängen-Höhe der Vorlage bringen
+    if (sample.bodyPx) {
+      const f = Math.min(1.35, Math.max(0.75, sample.bodyPx / bodyHeight(pts)));
+      pts = pts.map((p) => [minX + (p[0] - minX) * f, p[1] * f, p[2], p[3]]);
     }
-    pts = pts.map((p) => [p[0] - minX + origin.x, p[1] - meanY + origin.y - drop, p[2], p[3]]);
+    // Grundlinie: Median der tiefsten Punkte je Strich (die meisten Striche enden auf der Linie;
+    // Unterlängen sind in der Minderheit). Robuster als ein Prozentwert aller Punkte.
+    const base = baselineOf(pts);
+    pts = pts.map((p) => [p[0] - minX + origin.x, p[1] - base + origin.y, p[2], p[3]]);
 
     const strokes = [];
     let cur = [];
