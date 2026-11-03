@@ -1185,6 +1185,17 @@
 
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
+      // Die Kopfzeilen für mehrere Kerne (siehe sw.js) gelten erst, wenn der Offline-Speicher die Seite
+      // ausliefert: beim ersten Mal bzw. nach einem Update einmal neu laden
+      if (!self.crossOriginIsolated) {
+        const reloadOnce = () => {
+          if (sessionStorage.getItem('coiReload')) return;
+          sessionStorage.setItem('coiReload', '1');
+          location.reload();
+        };
+        if (navigator.serviceWorker.controller) navigator.serviceWorker.addEventListener('controllerchange', reloadOnce);
+        else navigator.serviceWorker.ready.then(() => navigator.serviceWorker.controller ? reloadOnce() : navigator.serviceWorker.addEventListener('controllerchange', reloadOnce));
+      }
     }
     window.__app = { state, page, pad, engine };
   }

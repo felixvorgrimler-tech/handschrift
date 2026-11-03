@@ -430,17 +430,24 @@
       while (k < segments.length) {
         const seg = segments[k], oo = o();
         let best = null, bestScore = Infinity, bestErr = 1;
+        // frei lesen am Zeilenanfang und bei Großbuchstaben: die missraten am ehesten, und die
+        // Wortteil-Sicherheit allein lässt z. B. ein schiefes W noch durchgehen
+        const read = !oo.continued || /\p{Lu}/u.test(seg);
+        const make = () => dropLeadingSpecks(this.generate(seg, oo));
+        let next = make();
         // 4 Versuche; ist danach noch ein Wortteil unsicher erkannt, bis zu 4 weitere
-        for (let t = 0; t < (bestErr > 0.08 ? 8 : 4); t++) {
-          let pts = this.generate(seg, oo);
-          pts = dropLeadingSpecks(pts);
+        for (let t = 0; t < (bestErr > 0.08 ? 8 : 4) && next; t++) {
+          const pts = next;
           const pen = legibilityPenalty(pts, seg, oo.continued);
-          // frei lesen am Zeilenanfang und bei Großbuchstaben: die missraten am ehesten, und die
-          // Wortteil-Sicherheit allein lässt z. B. ein schiefes W noch durchgehen
-          const err = await opts.score(seg, pts, !oo.continued || /\p{Lu}/u.test(seg));
-          const s = err + 0.03 * pen;
-          if (s < bestScore) { best = pts; bestScore = s; bestErr = err; }
+          const pending = opts.score(seg, pts, read);
+          // während diese Variante geprüft wird (anderer Thread), schon die nächste schreiben;
+          // wird die jetzige genommen, ist die nächste umsonst, die Zeit wäre aber ohnehin Warten
+          next = t + 1 < 4 || (t + 1 < 8 && bestErr > 0.08) ? make() : null;
+          const err = await pending;
+          const sc = err + 0.03 * pen;
+          if (sc < bestScore) { best = pts; bestScore = sc; bestErr = err; }
           if (err < 0.02 && pen <= 2) break;
+          if (!next && t + 1 < (bestErr > 0.08 ? 8 : 4)) next = make();
         }
         add(best);
       }

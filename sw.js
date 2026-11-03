@@ -1,5 +1,5 @@
 // Offline-Cache: App-Dateien und Modell einmal laden, danach ohne Internet nutzbar.
-const CACHE = 'handschrift-v11';
+const CACHE = 'handschrift-v12';
 const FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'engine.js', 'ink.js', 'ocr.js', 'notewise.js', 'icon.svg', 'manifest.webmanifest',
   'model/meta.json', 'model/weights.bin', 'model/presets.json',
@@ -13,6 +13,16 @@ self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
+
+// Eigene Antworten bekommen COOP/COEP-Kopfzeilen: Dann ist die Seite „cross-origin isolated“ und die
+// Texterkennung darf mehrere Prozessorkerne nutzen (GitHub Pages kann diese Kopfzeilen nicht selbst setzen).
+function isolate(r) {
+  if (!r || r.type === 'opaque' || r.type === 'opaqueredirect') return r;
+  const h = new Headers(r.headers);
+  h.set('Cross-Origin-Opener-Policy', 'same-origin');
+  h.set('Cross-Origin-Embedder-Policy', 'credentialless');
+  return new Response(r.body, { status: r.status, statusText: r.statusText, headers: h });
+}
 
 // Netz zuerst (damit Updates ankommen), sonst Cache
 self.addEventListener('fetch', (e) => {
@@ -28,7 +38,7 @@ self.addEventListener('fetch', (e) => {
         const copy = r.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy));
       }
-      return r;
-    }).catch(() => caches.match(e.request, { ignoreSearch: true }))
+      return own ? isolate(r) : r;
+    }).catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => (own ? isolate(r) : r)))
   );
 });

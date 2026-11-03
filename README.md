@@ -47,7 +47,10 @@ erzeugt (bis zu 6 Versuche).
 schlecht geformte Buchstaben auf, auch wenn man das Wort erraten könnte. Bei Stücken mit Großbuchstaben (die missraten
 am häufigsten) liest sie zusätzlich frei. Die App nimmt die Variante mit der besten Note (4 Versuche, bei Bedarf bis 8).
 Stücke beginnen möglichst nicht mit einem großgeschriebenen Wort. Das kostet einmalig ca. 65 MB Download und macht das
-Schreiben deutlich langsamer (am PC ~75 s für zwei lange Zeilen).
+Schreiben deutlich langsamer. Beschleunigt durch: Bild nur einmal einlesen (Encoder-Ergebnis für Wortteil-Prüfung und
+freies Lesen), mehrere Prozessorkerne für die Erkennung (Bibliothek in `ocr/lib`, Seite per COOP/COEP aus `sw.js`
+„cross-origin isolated“) und Schreiben der nächsten Variante, während die vorige geprüft wird. Am PC: eine Prüfung
+1,5 s → 0,4 s, zwei lange Zeilen 155 s → 87 s (bei gleicher Bewertung).
 
 Immer aktiv: Striche, die das Modell nach dem letzten Zeichen noch setzt (Haken hinter dem Satzpunkt), und einzelne
 Punkte vor dem ersten Buchstaben werden entfernt.

@@ -4,7 +4,10 @@
 // Zusammenhang erraten könnte, und ebenso Zusatzstriche (z. B. ein Strich hinter dem Satzpunkt).
 (function () {
   'use strict';
-  const LIB = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
+  // transformers.js 3.0.2 und die ONNX-Laufzeit liegen im eigenen Repo (ocr/lib): Für mehrere Prozessorkerne
+  // startet die Laufzeit Hilfs-Threads aus ihrer eigenen Datei, und das erlaubt der Browser nur von der
+  // eigenen Adresse (dazu muss die Seite „cross-origin isolated“ sein, siehe sw.js)
+  const LIB = new URL('ocr/lib/transformers.min.js', location.href).href;
   let ready = null, lib = null;
   let queue = Promise.resolve();   // ein Modell, also nacheinander lesen
 
@@ -16,7 +19,12 @@
       env.allowRemoteModels = false;
       env.allowLocalModels = true;
       env.localModelPath = new URL('ocr/', location.href).pathname;
-      return pipeline('image-to-text', 'de-trocr', { dtype: 'q8' });
+      env.backends.onnx.wasm.wasmPaths = new URL('ocr/lib/', location.href).href;
+      const pipe = await pipeline('image-to-text', 'de-trocr', { dtype: 'q8' });
+      // generate() filtert seine Eingaben nach forward_params; ohne „encoder_outputs“ darin würde es das
+      // schon eingelesene Bild verwerfen und den teuren Bild-Encoder ein zweites Mal laufen lassen
+      if (!pipe.model.forward_params.includes('encoder_outputs')) pipe.model.forward_params.push('encoder_outputs');
+      return pipe;
     })();
     ready.catch(() => { ready = null; });
     return ready;
@@ -66,14 +74,24 @@
     return prev[b.length] / Math.max(1, b.length);
   }
 
+  // Bild einmal einlesen (der teure Teil: Bild-Encoder), danach Wortteil-Prüfung und freies Lesen
+  // darauf aufsetzen. Die Pixel gehen direkt an die Erkennung, ohne Umweg über eine PNG-Datei.
+  async function encode(pipe, cv) {
+    const data = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+    const { pixel_values } = await pipe.processor(new lib.RawImage(data, cv.width, cv.height, 4));
+    const { encoder_outputs } = await pipe.model._prepare_encoder_decoder_kwargs_for_generation({
+      inputs_tensor: pixel_values, model_inputs: { pixel_values }, model_input_name: 'pixel_values',
+      generation_config: { guidance_scale: null },
+    });
+    return { pixel_values, encoder_outputs };
+  }
+
   // Wahrscheinlichkeit jedes Wortteils (und des Endes) des Solltexts im Bild (teacher forcing).
   // Das Modell schreibt selbst: Start <s>, <s>, " Wort…", </s>; daher das Leerzeichen vorne.
-  async function tokenProbs(pipe, cv, text) {
-    const img = await lib.RawImage.fromURL(cv.toDataURL());
-    const { pixel_values } = await pipe.processor(img);
+  async function tokenProbs(pipe, enc, text) {
     const ids = pipe.tokenizer(' ' + text).input_ids.tolist()[0].map(Number);
     const inp = [0].concat(ids.slice(0, -1));
-    const out = await pipe.model({ pixel_values, decoder_input_ids: new lib.Tensor('int64', BigInt64Array.from(inp.map(BigInt)), [1, inp.length]) });
+    const out = await pipe.model({ encoder_outputs: enc.encoder_outputs, decoder_input_ids: new lib.Tensor('int64', BigInt64Array.from(inp.map(BigInt)), [1, inp.length]) });
     const L = out.logits.dims[1], V = out.logits.dims[2], d = out.logits.data;
     const res = [];
     for (let i = 1; i < L; i++) {
@@ -94,11 +112,14 @@
       const pipe = await load();
       const cv = image(points);
       if (!cv) return 1;
-      const probs = await tokenProbs(pipe, cv, text);
+      const enc = await encode(pipe, cv);
+      const probs = await tokenProbs(pipe, enc, text);
       const tf = probs.reduce((s, p) => s + (p < 0.5 ? 1 - p : 0), 0) / Math.max(1, probs.length);
       if (!read) return tf;
-      const [r] = await pipe(cv.toDataURL(), { num_beams: 1 });
-      return Math.max(tf, Math.min(1, cer(r.generated_text, text)));
+      // frei lesen (gierig, wie die Pipeline mit num_beams 1), mit demselben eingelesenen Bild
+      const ids = await pipe.model.generate({ ...enc, num_beams: 1 });
+      const read_text = pipe.tokenizer.batch_decode(ids, { skip_special_tokens: true })[0];
+      return Math.max(tf, Math.min(1, cer(read_text, text)));
     });
     queue = job.catch(() => {});
     return job;
