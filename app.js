@@ -123,6 +123,7 @@
           this.workers.forEach((w) => w.w.terminate());
           this.workers = [];
           this.local = new HWEngine.Model(buf, meta);
+          this.kernel = (await this.local.useWasm('kern.wasm')) ? 'wasm' : 'js';
           this.localPrimed = new Map();
         }
       })();
@@ -147,7 +148,7 @@
         w.onerror = (e) => { clearTimeout(timer); rej(e); };
         w.onmessage = (ev) => {
           const m = ev.data;
-          if (m.type === 'ready') { clearTimeout(timer); res(slot); return; }
+          if (m.type === 'ready') { clearTimeout(timer); this.kernel = m.kern; res(slot); return; }
           if (m.type === 'score') {   // Gründlich: Variante lesen lassen
             OCR.score(m.seg, m.points, m.read).catch(() => 0).then((err) => w.postMessage({ type: 'scored', ask: m.ask, err }));
             return;
@@ -1038,6 +1039,8 @@
         : `Standardmodell mit ${engine.custom.primes.length} echten Zeilen aus deinen Notizen als Vorlage`}`
       : 'Standardmodell (fremde Handschriften, nutzt deine Schriftproben als Vorlage)';
     $('modelReset').hidden = !engine.custom;
+    $('speedInfo').textContent = `Geschwindigkeit: Schreib-KI ${engine.kernel === 'wasm' ? 'mit schnellem Kern (WebAssembly)' : 'mit langsamem Kern (JavaScript)'}, `
+      + `Texterkennung ${self.crossOriginIsolated ? 'auf mehreren Prozessorkernen' : 'auf einem Prozessorkern'}`;
   }
 
   // ---------------- Start ----------------

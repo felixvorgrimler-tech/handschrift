@@ -52,6 +52,10 @@ freies Lesen), mehrere Prozessorkerne für die Erkennung (Bibliothek in `ocr/lib
 „cross-origin isolated“) und Schreiben der nächsten Variante, während die vorige geprüft wird. Am PC: eine Prüfung
 1,5 s → 0,4 s, zwei lange Zeilen 155 s → 87 s (bei gleicher Bewertung).
 
+Die Schreib-KI rechnet ihren Kern (`tools/kern.c`) als WebAssembly mit SIMD (`kern.wasm`, Build-Befehl steht in der Datei):
+am PC 5 ms → 0,37 ms pro Punkt bei gleichen Punkten, zwei lange Zeilen 87 s → 17 s. Fehlt die Datei oder kann das Gerät
+kein SIMD, rechnet die App mit JavaScript weiter. Die Einstellungen zeigen unter „KI-Modell“, was gerade aktiv ist.
+
 Immer aktiv: Striche, die das Modell nach dem letzten Zeichen noch setzt (Haken hinter dem Satzpunkt), und einzelne
 Punkte vor dem ersten Buchstaben werden entfernt.
 

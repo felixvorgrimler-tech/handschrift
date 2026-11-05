@@ -70,8 +70,44 @@
       return c;
     }
 
-    // z = [x, h] @ kernel + bias, dann LSTM-Update (TF-Reihenfolge i, j, f, o; forget_bias 1)
-    lstm(kernel, bias, x, h, c) {
+    // Schneller Rechenkern (tools/kern.c als WebAssembly mit SIMD, am PC 13-mal schneller, gleiche Punkte).
+    // Klappt das nicht (Datei fehlt, Gerät ohne SIMD), rechnet lstm() weiter mit JavaScript.
+    async useWasm(url) {
+      try {
+        const bytes = await fetch(url).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); });
+        const { instance } = await WebAssembly.instantiate(bytes);
+        const { memory, matmul } = instance.exports;
+        const G = 4 * H, nxMax = 2 * H + this.A + 3;
+        const kernels = [this.t.lstm1_k, this.t.lstm2_k, this.t.lstm3_k];
+        const need = kernels.reduce((a, k) => a + k.length, 0) + G + nxMax;
+        let top = memory.buffer.byteLength;
+        memory.grow(Math.ceil((need * 4) / 65536));   // danach erst Sichten anlegen, grow macht alte ungültig
+        const off = new Map();
+        for (const k of kernels) {
+          off.set(k, top);
+          new Float32Array(memory.buffer, top, k.length).set(k);
+          top += k.length * 4;
+        }
+        const zOff = top, xOff = zOff + G * 4;
+        const z = new Float32Array(memory.buffer, zOff, G), xv = new Float32Array(memory.buffer, xOff, nxMax);
+        this.kern = { matmul, off, z, xv, zOff, xOff };
+        return true;
+      } catch (e) {
+        console.warn('WebAssembly-Kern nicht verfügbar, rechne mit JavaScript', e);
+        return false;
+      }
+    }
+
+    // z = [x, h] @ kernel + bias
+    matmulWasm(kernel, bias, x, h) {
+      const { matmul, off, z, xv, zOff, xOff } = this.kern;
+      z.set(bias);
+      xv.set(x, 0); xv.set(h, x.length);
+      matmul(zOff, off.get(kernel), xOff, x.length + H, 4 * H);
+      return z;
+    }
+
+    matmulJs(kernel, bias, x, h) {
       const z = this.z, G = 4 * H;
       z.set(bias);
       const nx = x.length;
@@ -87,6 +123,12 @@
         const row = (nx + i) * G;
         for (let j = 0; j < G; j++) z[j] += hi * kernel[row + j];
       }
+      return z;
+    }
+
+    // LSTM-Update (TF-Reihenfolge i, j, f, o; forget_bias 1)
+    lstm(kernel, bias, x, h, c) {
+      const z = this.kern ? this.matmulWasm(kernel, bias, x, h) : this.matmulJs(kernel, bias, x, h);
       for (let k = 0; k < H; k++) {
         const ig = sigmoid(z[k]);
         const jg = Math.tanh(z[H + k]);
@@ -480,7 +522,8 @@
       try {
         if (msg.type === 'init') {
           model = new Model(msg.buffer, msg.meta);
-          global.postMessage({ type: 'ready' });
+          const fast = await model.useWasm('kern.wasm');
+          global.postMessage({ type: 'ready', kern: fast ? 'wasm' : 'js' });
         } else if (msg.type === 'generate') {
           let st = null;
           if (msg.prime) {
