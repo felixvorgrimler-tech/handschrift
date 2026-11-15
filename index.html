@@ -10,9 +10,31 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<!-- Bibliothek (Startbildschirm): Ordner und Notizen -->
+<section id="library" hidden>
+  <aside id="libSide"></aside>
+  <div class="lib-main">
+    <header class="lib-bar">
+      <div id="libCrumbs" class="crumbs"></div>
+      <div class="spacer"></div>
+      <input id="libSearch" type="search" placeholder="Suchen" autocomplete="off">
+      <select id="libSort" title="Sortieren">
+        <option value="opened">Zuletzt geöffnet</option>
+        <option value="updated">Zuletzt geändert</option>
+        <option value="name">Name</option>
+      </select>
+      <button id="libNewFolder" class="btn">+ Ordner</button>
+      <button id="libNewNote" class="btn primary">+ Notiz</button>
+      <button id="libSettings" class="tb" title="Einstellungen">⚙</button>
+    </header>
+    <div id="libGrid"></div>
+  </div>
+</section>
+
 <header id="toolbar">
-  <button id="btnNotes" class="tb" title="Notizen">☰</button>
-  <span id="noteTitle" class="title">Notiz</span>
+  <button id="btnNotes" class="tb" title="Zur Bibliothek">‹</button>
+  <button id="btnPages" class="tb" title="Seitenübersicht">▤</button>
+  <span id="noteTitle" class="title" title="Umbenennen">Notiz</span>
   <div class="group">
     <button data-tool="pen" class="tb tool active" title="Stift">✎</button>
     <button data-tool="eraser" class="tb tool" title="Radierer">⌫</button>
@@ -42,8 +64,23 @@
 
 <main id="stage">
   <canvas id="page"></canvas>
+  <div id="pagePill"><span id="pageNo">1 / 1</span><span id="zoomNo">100 %</span></div>
   <div id="status" hidden></div>
 </main>
+
+<!-- Seitenübersicht -->
+<aside id="pageSide" hidden>
+  <div class="side-head"><b>Seiten</b><button id="addPage" class="btn">+ Seite</button></div>
+  <div id="pageThumbs"></div>
+</aside>
+
+<!-- Zielordner wählen -->
+<div id="pickModal" class="modal" hidden>
+  <div class="modal-box small">
+    <div class="modal-head"><h2 id="pickTitle">Verschieben nach</h2><button id="pickClose" class="btn">Abbrechen</button></div>
+    <div id="pickList"></div>
+  </div>
+</div>
 
 <!-- Text-Eingabe für Handschrift -->
 <div id="textPanel" class="panel" hidden>
@@ -59,14 +96,6 @@
   </div>
 </div>
 
-<!-- Notizenliste -->
-<aside id="drawer" hidden>
-  <div class="drawer-head">
-    <b>Notizen</b>
-    <button id="btnNewNote" class="btn primary">+ Neue Notiz</button>
-  </div>
-  <ul id="noteList"></ul>
-</aside>
 
 <!-- Handschrift lernen -->
 <div id="handModal" class="modal" hidden>

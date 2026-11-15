@@ -47,15 +47,57 @@ select.tb { font-size: 14px; padding: 0 6px; border: 1px solid var(--ui-border);
 .slider { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; }
 .warn { color: var(--warn); font-size: 13px; }
 
-#drawer { position: fixed; top: 52px; left: 0; bottom: 0; width: min(320px, 85vw); background: var(--ui); border-right: 1px solid var(--ui-border);
-  z-index: 15; box-shadow: 4px 0 20px rgba(0,0,0,.1); display: flex; flex-direction: column; }
-.drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-bottom: 1px solid var(--ui-border); }
-#noteList { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
-#noteList li { display: flex; align-items: center; padding: 10px 12px; border-bottom: 1px solid #f0ebdf; cursor: pointer; gap: 6px; }
-#noteList li.active { background: #eef3fd; }
-#noteList li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#noteList li .date { color: var(--muted); font-size: 12px; }
-#noteList li button { border: none; background: none; cursor: pointer; font-size: 16px; color: var(--muted); padding: 4px 6px; }
+/* ---- Bibliothek ---- */
+#library { position: fixed; inset: 0; z-index: 25; display: flex; background: #f4f5f7; }
+body.in-library #toolbar, body.in-library #stage, body.in-library #pageSide { display: none; }
+#libSide { width: 240px; flex: none; background: #fff; border-right: 1px solid #e3e5ea; padding: 14px 8px; overflow-y: auto; }
+.side-item { display: flex; align-items: center; gap: 10px; width: 100%; border: none; background: none; text-align: left;
+  padding: 9px 12px; border-radius: 10px; cursor: pointer; font-size: 15px; color: #2b2f36; }
+.side-item:hover { background: #f1f3f6; }
+.side-item.active { background: #e8f0fe; color: #1a56d6; font-weight: 600; }
+.side-item .ic { width: 22px; display: inline-flex; justify-content: center; flex: none; }
+.side-item .ic svg { width: 20px; height: 16px; }
+.side-item .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.lib-bar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background: #fff; border-bottom: 1px solid #e3e5ea; flex-wrap: wrap; }
+.crumbs { display: flex; align-items: center; gap: 2px; font-size: 20px; font-weight: 700; min-width: 0; overflow: hidden; }
+.crumb { border: none; background: none; font: inherit; color: #2b2f36; cursor: pointer; padding: 2px 4px; border-radius: 6px; white-space: nowrap; }
+.crumb:last-child { color: #111; }
+.crumbs .sep { color: #9aa0a8; padding: 0 2px; }
+#libSearch { width: 200px; padding: 8px 12px; border: 1px solid #dfe2e7; border-radius: 20px; background: #f6f7f9; -webkit-user-select: text; user-select: text; }
+#libSort { padding: 8px; border: 1px solid #dfe2e7; border-radius: 10px; background: #fff; }
+#libGrid { flex: 1; overflow-y: auto; padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 22px 18px; align-content: start; }
+.card { cursor: pointer; min-width: 0; }
+.card .cover { aspect-ratio: 1000 / 1414; border-radius: 10px; overflow: hidden; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.12), 0 4px 14px rgba(0,0,0,.06); display: flex; align-items: center; justify-content: center; }
+.card .cover img, .card .cover .blank { width: 100%; height: 100%; object-fit: cover; display: block; background: #fffdf7; }
+.card.folder .cover { background: none; box-shadow: none; }
+.card.folder .cover svg { width: 82%; height: auto; filter: drop-shadow(0 3px 6px rgba(0,0,0,.15)); }
+.card:hover .cover { box-shadow: 0 2px 6px rgba(0,0,0,.18), 0 8px 22px rgba(0,0,0,.08); }
+.card .cap { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+.card .name { flex: 1; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .more { border: none; background: none; font-size: 18px; color: #6b7280; cursor: pointer; padding: 0 6px; border-radius: 6px; }
+.card .more:hover { background: #e9ecf1; }
+.card .meta { color: #7b8190; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#libGrid .empty { grid-column: 1 / -1; text-align: center; margin-top: 60px; }
+#popMenu { position: fixed; z-index: 50; background: #fff; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.18); padding: 6px; min-width: 190px; display: flex; flex-direction: column; }
+#popMenu button { border: none; background: none; text-align: left; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 15px; }
+#popMenu button:hover { background: #f1f3f6; }
+#popMenu button.danger { color: #c62828; }
+#pickList { margin-top: 10px; max-height: 60vh; overflow-y: auto; }
+@media (max-width: 700px) { #libSide { display: none; } #libSearch { width: 130px; } }
+
+/* ---- Seiten ---- */
+#pagePill { position: absolute; left: 14px; bottom: 14px; display: flex; gap: 10px; background: rgba(32, 34, 38, .82); color: #fff;
+  padding: 6px 14px; border-radius: 18px; font-size: 13px; pointer-events: none; }
+#pagePill #zoomNo { border-left: 1px solid rgba(255,255,255,.3); padding-left: 10px; }
+#pageSide { position: fixed; top: 52px; left: 0; bottom: 0; width: 168px; background: #f4f5f7; border-right: 1px solid #e3e5ea; z-index: 12; display: flex; flex-direction: column; }
+body.with-pages #stage { left: 168px; }
+.side-head { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #e3e5ea; }
+.side-head .btn { padding: 6px 10px; }
+#pageThumbs { overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.pthumb { border: 2px solid transparent; background: none; padding: 0; border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: #6b7280; }
+.pthumb canvas { border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,.18); }
+.pthumb.active { border-color: #2f6fe0; }
 
 .modal { position: fixed; inset: 0; background: rgba(20, 20, 20, .35); z-index: 30; display: flex; align-items: flex-start; justify-content: center; overflow-y: auto; padding: 16px; }
 .modal-box { background: var(--ui); border-radius: 16px; padding: 16px 18px 20px; width: min(1100px, 100%); box-shadow: 0 10px 40px rgba(0,0,0,.2); }

@@ -210,6 +210,7 @@
 
   // ---------------- Zeichenfläche ----------------
   function drawPaper(ctx, s, x0, y0, w, h, scrollY, opts) {
+    const sx = opts.scrollX || 0;   // waagerechter Versatz (gezoomt)
     ctx.fillStyle = '#fffdf7';
     ctx.fillRect(x0, y0, w, h);
     const ls = opts.lineSpacing;
@@ -224,7 +225,7 @@
           ctx.moveTo(x0, (y - scrollY) * s); ctx.lineTo(x0 + w, (y - scrollY) * s);
         }
       }
-      for (let x = GRID_OFF; x <= PAGE_W; x += GRID) { ctx.moveTo(x * s, 0); ctx.lineTo(x * s, h); }
+      for (let x = GRID_OFF; x <= PAGE_W; x += GRID) { ctx.moveTo((x - sx) * s, 0); ctx.lineTo((x - sx) * s, h); }
       ctx.stroke();
     } else if (opts.paper === 'nwgrid' || opts.paper === 'lined' || opts.paper === 'grid') {
       ctx.strokeStyle = opts.paper === 'grid' ? '#dfe7f1' : '#c9d8ea';
@@ -245,14 +246,14 @@
           }
         }
         if (opts.paper === 'grid') {
-          for (let x = 0; x <= PAGE_W; x += step) { ctx.moveTo(x * s, 0); ctx.lineTo(x * s, h); }
+          for (let x = 0; x <= PAGE_W; x += step) { ctx.moveTo((x - sx) * s, 0); ctx.lineTo((x - sx) * s, h); }
         }
       }
       ctx.stroke();
     }
     if (opts.paper === 'lined' && !opts.single) {
       ctx.strokeStyle = '#f2c4c4';
-      ctx.beginPath(); ctx.moveTo((LEFT - 12) * s, 0); ctx.lineTo((LEFT - 12) * s, h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo((LEFT - 12 - sx) * s, 0); ctx.lineTo((LEFT - 12 - sx) * s, h); ctx.stroke();
     }
     // Seitenwechsel: grauer Streifen mit Seitenzahl
     if (!opts.single && !opts.noBreaks) {
@@ -278,6 +279,8 @@
       this.ghosts = [];
       this.marker = null;
       this.scrollY = 0;
+      this.scrollX = 0;
+      this.userZoom = 1;   // 1 = Seitenbreite füllt den Bildschirm, bis 5 (500 %)
       this.live = null;
       this.base = document.createElement('canvas');
       this.pointers = new Map();
@@ -292,7 +295,8 @@
       const dpr = window.devicePixelRatio || 1;
       const cssW = this.canvas.clientWidth || this.canvas.parentElement.clientWidth;
       if (!cssW) return; // unsichtbar (z. B. geschlossener Dialog)
-      this.zoom = cssW / PAGE_W;
+      this.fit = cssW / PAGE_W;
+      this.zoom = this.fit * this.userZoom;
       if (this.opts.fixedHeight) this.canvas.style.height = this.opts.fixedHeight * this.zoom + 'px';
       const cssH = this.canvas.clientHeight;
       this.dpr = dpr;
@@ -301,8 +305,25 @@
       this.base.width = this.canvas.width;
       this.base.height = this.canvas.height;
       // nach dem Drehen: Position in die neuen Grenzen holen
-      if (!this.opts.fixedHeight) this.scrollY = Math.min(this.scrollY, this.maxScroll());
+      if (!this.opts.fixedHeight) {
+        this.scrollY = Math.min(this.scrollY, this.maxScroll());
+        this.scrollX = Math.min(this.scrollX, this.maxScrollX());
+      }
       this.render();
+    }
+
+    maxScrollX() { return Math.max(0, PAGE_W - this.canvas.clientWidth / this.zoom); }
+
+    // Zoomen um einen Bildschirmpunkt (cx, cy): der Punkt darunter bleibt an seiner Stelle
+    zoomAt(userZoom, cx, cy) {
+      if (this.opts.fixedHeight) return;
+      const r = this.canvas.getBoundingClientRect();
+      const ux = (cx - r.left) / this.zoom + this.scrollX, uy = (cy - r.top) / this.zoom + this.scrollY;
+      this.userZoom = Math.min(5, Math.max(1, userZoom));
+      this.zoom = this.fit * this.userZoom;
+      this.scrollX = Math.min(Math.max(0, ux - (cx - r.left) / this.zoom), this.maxScrollX());
+      this.scrollY = Math.min(Math.max(0, uy - (cy - r.top) / this.zoom), Math.max(this.maxScroll(), 0));
+      this.scheduleRender();
     }
 
     // tatsächlich sichtbare Höhe der Fläche (Tastatur, Browser- oder Navigationsleiste können sie verdecken)
@@ -317,13 +338,15 @@
     // Ende der Seite mit dem letzten Strich und ein Stück in die nächste (dort weiterschreiben)
     maxScroll() {
       const vis = this.visibleHeight() / this.zoom, cb = this.contentBottom();
-      const end = Math.max(cb + vis * 0.6, (pageOf(cb) + 1) * PAGE_H + 300);
+      // mit Seitenzahl (Notizbuch): bis zum Ende der letzten Seite; sonst ein Stück in die nächste Seite
+      const pagesEnd = this.opts.pages ? Math.max(this.opts.pages(), pageOf(cb) + 1) * PAGE_H + 20 : (pageOf(cb) + 1) * PAGE_H + 300;
+      const end = Math.max(cb + vis * 0.6, pagesEnd);
       return Math.max(0, end - vis);
     }
 
     toUnits(e) {
       const r = this.canvas.getBoundingClientRect();
-      return [(e.clientX - r.left) / this.zoom, (e.clientY - r.top) / this.zoom + this.scrollY];
+      return [(e.clientX - r.left) / this.zoom + this.scrollX, (e.clientY - r.top) / this.zoom + this.scrollY];
     }
 
     contentBottom() {
@@ -332,12 +355,14 @@
       return b;
     }
 
-    scrollBy(dy) {
+    scrollBy(dy, dx = 0) {
       if (this.opts.fixedHeight) return false;
-      const before = this.scrollY;
+      const before = this.scrollY, beforeX = this.scrollX;
       this.scrollY = Math.min(Math.max(0, this.scrollY + dy), Math.max(this.maxScroll(), this.scrollY));
-      if (this.scrollY !== before) { this.showBar = performance.now(); this.scheduleRender(); }
-      return this.scrollY !== before;
+      this.scrollX = Math.min(Math.max(0, this.scrollX + dx), this.maxScrollX());
+      const moved = this.scrollY !== before || this.scrollX !== beforeX;
+      if (moved) { this.showBar = performance.now(); this.scheduleRender(); }
+      return moved;
     }
 
     // höchstens einmal pro Bild neu zeichnen (beim Scrollen kommen viele Bewegungen pro Bild)
@@ -370,10 +395,10 @@
       const st = this.settings;
       drawPaper(b, s, 0, 0, W, Hh, this.scrollY, {
         paper: this.opts.paper ? this.opts.paper() : st.paper, lineSpacing: st.lineSpacing,
-        single: this.opts.singleLine,
+        single: this.opts.singleLine, scrollX: this.scrollX,
       });
       const top = this.scrollY, bottom = this.scrollY + Hh / s;
-      b.setTransform(s, 0, 0, s, 0, -this.scrollY * s);
+      b.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
       for (const st2 of this.strokes) {
         const bb = st2.bounds || (st2.bounds = Ink.strokeBounds(st2));
         if (bb.y1 < top - 10 || bb.y0 > bottom + 10) continue;
@@ -402,6 +427,7 @@
         this.barTimer = setTimeout(() => this.render(), 1250);
       }
       this.present();
+      if (this.opts.onView) this.opts.onView(this);
     }
 
     present() {
@@ -410,12 +436,12 @@
       c.drawImage(this.base, 0, 0);
       if (this.live) {
         const s = this.zoom * this.dpr;
-        c.setTransform(s, 0, 0, s, 0, -this.scrollY * s);
+        c.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
         Ink.drawStroke(c, this.live, 1);
       }
       if (this.eraserAt) {
         const s = this.zoom * this.dpr;
-        c.setTransform(s, 0, 0, s, 0, -this.scrollY * s);
+        c.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
         c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 1;
         c.beginPath(); c.arc(this.eraserAt[0], this.eraserAt[1], ERASE_R, 0, Math.PI * 2); c.stroke();
       }
@@ -432,7 +458,12 @@
       c.addEventListener('pointermove', (e) => this.move(e));
       c.addEventListener('pointerup', (e) => this.up(e));
       c.addEventListener('pointercancel', (e) => this.up(e, true));
-      c.addEventListener('wheel', (e) => { e.preventDefault(); this.scrollBy(e.deltaY / this.zoom); }, { passive: false });
+      c.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        // Strg + Mausrad (bzw. Zwei-Finger-Zoom am Touchpad) zoomt, sonst scrollen
+        if (e.ctrlKey) this.zoomAt(this.userZoom * Math.exp(-e.deltaY * 0.002), e.clientX, e.clientY);
+        else this.scrollBy(e.deltaY / this.zoom, e.deltaX / this.zoom);
+      }, { passive: false });
       c.addEventListener('contextmenu', (e) => e.preventDefault());
     }
 
@@ -446,8 +477,15 @@
       this.pointers.set(e.pointerId, info);
       const touches = [...this.pointers.values()].filter((q) => q.type === 'touch');
       if (touches.length >= 2) {
-        // zwei Finger: immer scrollen, angefangenen Strich verwerfen
-        touches.forEach((q) => { q.mode = 'pan'; });
+        // zwei Finger: zoomen und verschieben (wie in Notewise), angefangenen Strich verwerfen
+        const [a, b] = touches;
+        touches.forEach((q) => { q.mode = 'pinch'; });
+        const mx = (a.lastClient[0] + b.lastClient[0]) / 2, my = (a.lastClient[1] + b.lastClient[1]) / 2;
+        const r = this.canvas.getBoundingClientRect();
+        this.pinch = {
+          d0: Math.hypot(a.lastClient[0] - b.lastClient[0], a.lastClient[1] - b.lastClient[1]) || 1,
+          z0: this.userZoom, ux: (mx - r.left) / this.zoom + this.scrollX, uy: (my - r.top) / this.zoom + this.scrollY,
+        };
         if (this.live) { this.live = null; this.present(); }
         return;
       }
@@ -474,14 +512,32 @@
       if (!info) return;
       const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
       const list = evs.length ? evs : [e];
+      if (info.mode === 'pinch') {
+        info.lastClient = [e.clientX, e.clientY];
+        const two = [...this.pointers.values()].filter((q) => q.mode === 'pinch');
+        if (two.length < 2 || !this.pinch) return;
+        const [a, b] = two, p = this.pinch;
+        const d = Math.hypot(a.lastClient[0] - b.lastClient[0], a.lastClient[1] - b.lastClient[1]);
+        const mx = (a.lastClient[0] + b.lastClient[0]) / 2, my = (a.lastClient[1] + b.lastClient[1]) / 2;
+        const r = this.canvas.getBoundingClientRect();
+        // der Punkt, der zu Beginn zwischen den Fingern lag, bleibt zwischen den Fingern
+        this.userZoom = Math.min(5, Math.max(1, p.z0 * d / p.d0));
+        this.zoom = this.fit * this.userZoom;
+        this.scrollX = Math.min(Math.max(0, p.ux - (mx - r.left) / this.zoom), this.maxScrollX());
+        this.scrollY = Math.min(Math.max(0, p.uy - (my - r.top) / this.zoom), Math.max(this.maxScroll(), 0));
+        this.showBar = performance.now();
+        this.scheduleRender();
+        return;
+      }
       if (info.mode === 'pan' || info.mode === 'tap-or-pan') {
+        const dx = (e.clientX - info.lastClient[0]) / this.zoom;
         const dy = (e.clientY - info.lastClient[1]) / this.zoom;
         info.moved += Math.abs(dy) + Math.abs(e.clientX - info.lastClient[0]) / this.zoom;
         info.lastClient = [e.clientX, e.clientY];
         if (info.mode === 'tap-or-pan' && info.moved > 8) info.mode = 'pan';
         if (info.mode === 'pan') {
           const pans = [...this.pointers.values()].filter((q) => q.mode === 'pan').length || 1;
-          this.scrollBy(-dy / pans);
+          this.scrollBy(-dy / pans, -dx / pans);
           const now = performance.now();   // Geschwindigkeit der letzten 100 ms für den Schwung
           info.vel = (info.vel || []).filter((q) => now - q[0] < 100);
           info.vel.push([now, -dy / pans]);
@@ -507,6 +563,12 @@
       const info = this.pointers.get(e.pointerId);
       this.pointers.delete(e.pointerId);
       if (!info) return;
+      if (info.mode === 'pinch') {
+        // der verbleibende Finger verschiebt nur noch (kein Strich, kein Antippen)
+        this.pinch = null;
+        for (const q of this.pointers.values()) if (q.mode === 'pinch') q.mode = 'pan';
+        return;
+      }
       if (info.mode === 'pan' && info.vel && !this.pointers.size) {
         const now = performance.now(), recent = info.vel.filter((q) => now - q[0] < 100);
         if (recent.length > 1) this.fling(recent.reduce((a, q) => a + q[1], 0) / Math.max(16, now - recent[0][0]));
@@ -575,6 +637,7 @@
     color: '#000000',
     width: 2.1,
     notes: [],
+    folders: [],
     noteId: null,
     undo: [],
     redo: [],
@@ -591,32 +654,58 @@
     if (ms) showStatus.t = setTimeout(() => { el.hidden = true; }, ms);
   }
 
-  // ---------------- Notizen ----------------
-  async function loadNotes() {
+  // ---------------- Bibliothek: Ordner und Notizen (Aufbau wie in Notewise) ----------------
+  // Ordner: {id, name, parent (null = oberste Ebene), color}
+  // Notiz:  {id, title, folder, created, updated, opened, pages, thumb}; Striche liegen unter 'note:<id>'
+  const FOLDER_COLORS = ['#4a90e2', '#e5534b', '#f2a33a', '#3fb27f', '#9b6bd6', '#7a7f87'];
+  const lib = { folder: null, search: '', sort: 'opened' };   // folder: null = Bibliothek, 'recent' = Zuletzt
+
+  const noteById = (id) => state.notes.find((n) => n.id === id);
+  const folderById = (id) => state.folders.find((f) => f.id === id);
+  const currentNote = () => noteById(state.noteId);
+
+  async function loadLibrary() {
     state.notes = (await Store.get('notes')) || [];
-    if (!state.notes.length) {
-      const n = { id: uid(), title: 'Erste Notiz', updated: Date.now() };
-      state.notes.push(n);
-      await Store.set('notes', state.notes);
+    state.folders = (await Store.get('folders')) || [];
+    for (const n of state.notes) {   // ältere Notizen ohne Ordner/Seitenzahl
+      n.folder = n.folder ?? null;
+      n.created = n.created || n.updated || Date.now();
+      n.opened = n.opened || n.updated || 0;
+      n.pages = n.pages || 1;
     }
-    const last = await Store.get('lastNote');
-    await openNote(state.notes.find((n) => n.id === last) ? last : state.notes[0].id);
+    const s = (await Store.get('libView')) || {};
+    lib.sort = s.sort || 'opened';
+  }
+  const saveLibrary = () => Promise.all([Store.set('notes', state.notes), Store.set('folders', state.folders)]);
+
+  function folderPath(id) {
+    const path = [];
+    for (let f = folderById(id); f; f = folderById(f.parent)) path.unshift(f);
+    return path;
+  }
+  // alle Unterordner (für Löschen und Verschieben)
+  function descendants(id) {
+    const out = [];
+    for (const f of state.folders) if (f.parent === id) out.push(f.id, ...descendants(f.id));
+    return out;
   }
 
   async function openNote(id) {
     if (state.noteId) await saveNow();
     state.noteId = id;
+    const n = noteById(id);
     const data = (await Store.get('note:' + id)) || { strokes: [] };
     page.strokes = data.strokes.map((s) => ({ ...s, bounds: Ink.strokeBounds(s) }));
-    page.scrollY = 0;
+    page.scrollY = 0; page.scrollX = 0;
     page.marker = null;
     page.ghosts = [];
     state.undo = []; state.redo = [];
-    const n = state.notes.find((x) => x.id === id);
-    $('noteTitle').textContent = n ? n.title : 'Notiz';
-    Store.set('lastNote', id);
+    n.opened = Date.now();
+    $('noteTitle').textContent = n.title;
+    await Store.set('notes', state.notes);
+    showEditor();
     page.render();
-    renderNoteList();
+    if (!$('pageSide').hidden) renderPageThumbs();
   }
 
   let saveTimer = null;
@@ -626,44 +715,309 @@
   }
   async function saveNow() {
     clearTimeout(saveTimer);
-    if (!state.noteId) return;
+    const n = currentNote();
+    if (!n) return;
     const strokes = page.strokes.map((s) => ({ id: s.id, pts: s.pts, color: s.color, width: s.width }));
-    await Store.set('note:' + state.noteId, { strokes });
-    const n = state.notes.find((x) => x.id === state.noteId);
-    if (n) { n.updated = Date.now(); await Store.set('notes', state.notes); }
+    await Store.set('note:' + n.id, { strokes });
+    n.updated = Date.now();
+    n.pages = Math.max(n.pages || 1, pageOf(page.contentBottom()) + 1);
+    n.thumb = makeThumb(page.strokes);
+    await Store.set('notes', state.notes);
   }
 
-  function renderNoteList() {
-    const ul = $('noteList');
-    ul.innerHTML = '';
-    for (const n of [...state.notes].sort((a, b) => b.updated - a.updated)) {
-      const li = document.createElement('li');
-      if (n.id === state.noteId) li.className = 'active';
-      const d = new Date(n.updated);
-      li.innerHTML = `<span class="name"></span><span class="date">${d.toLocaleDateString('de-DE')}</span>
-        <button data-act="ren" title="Umbenennen">✎</button><button data-act="del" title="Löschen">🗑</button>`;
-      li.querySelector('.name').textContent = n.title;
-      li.onclick = async (ev) => {
-        const act = ev.target.dataset.act;
-        if (act === 'ren') {
-          const t = prompt('Name der Notiz', n.title);
-          if (t) { n.title = t.trim() || n.title; await Store.set('notes', state.notes); if (n.id === state.noteId) $('noteTitle').textContent = n.title; renderNoteList(); }
-          return;
-        }
-        if (act === 'del') {
-          if (!confirm(`„${n.title}“ wirklich löschen?`)) return;
-          state.notes = state.notes.filter((x) => x.id !== n.id);
-          await Store.del('note:' + n.id);
-          if (!state.notes.length) state.notes.push({ id: uid(), title: 'Neue Notiz', updated: Date.now() });
-          await Store.set('notes', state.notes);
-          if (n.id === state.noteId) { state.noteId = null; await openNote(state.notes[0].id); } else renderNoteList();
-          return;
-        }
-        await openNote(n.id);
-        $('drawer').hidden = true;
-      };
-      ul.appendChild(li);
+  // ---- Seiten ----
+  const pageCount = () => { const n = currentNote(); return n ? Math.max(n.pages || 1, pageOf(page.contentBottom()) + 1) : 1; };
+
+  // Seite i (ab 0) als kleines Bild: Papier und die Striche, die auf dieser Seite liegen
+  function drawPageThumb(cv, strokes, i, w) {
+    const h = Math.round(w * PAGE_H / PAGE_W), dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    const c = cv.getContext('2d'), s = (w / PAGE_W) * dpr;
+    drawPaper(c, s, 0, 0, cv.width, cv.height, i * PAGE_H, { paper: state.settings.paper, lineSpacing: state.settings.lineSpacing, noBreaks: true });
+    c.setTransform(s, 0, 0, s, 0, -i * PAGE_H * s);
+    for (const st of strokes) {
+      const b = st.bounds || Ink.strokeBounds(st);
+      if (b.y1 < i * PAGE_H || b.y0 > (i + 1) * PAGE_H) continue;
+      Ink.drawStroke(c, st, 1);
     }
+    return cv;
+  }
+
+  function makeThumb(strokes) {
+    const cv = document.createElement('canvas');
+    const save = window.devicePixelRatio;
+    drawPageThumb(cv, strokes, 0, 160 / (save || 1));
+    return cv.toDataURL('image/jpeg', 0.75);
+  }
+
+  function renderPageThumbs() {
+    const box = $('pageThumbs');
+    box.innerHTML = '';
+    const n = pageCount(), cur = pageOf(page.scrollY + page.visibleHeight() / page.zoom / 2);
+    for (let i = 0; i < n; i++) {
+      const item = document.createElement('button');
+      item.className = 'pthumb' + (i === cur ? ' active' : '');
+      item.appendChild(drawPageThumb(document.createElement('canvas'), page.strokes, i, 120));
+      item.insertAdjacentHTML('beforeend', `<span>${i + 1}</span>`);
+      item.onclick = () => goToPage(i);
+      box.appendChild(item);
+    }
+  }
+
+  function goToPage(i) {
+    page.scrollY = Math.min(i * PAGE_H, page.maxScroll());
+    page.render();
+    if (!$('pageSide').hidden) renderPageThumbs();
+  }
+
+  async function addPage() {
+    const n = currentNote();
+    n.pages = pageCount() + 1;
+    await saveNow();
+    goToPage(n.pages - 1);
+    showStatus(`Seite ${n.pages} hinzugefügt`, 1500);
+  }
+
+  // Anzeige unten links: Seite x / n und Zoom
+  function updatePill(sf) {
+    const n = pageCount();
+    const cur = Math.min(n, pageOf(sf.scrollY + sf.visibleHeight() / sf.zoom / 2) + 1);
+    $('pageNo').textContent = `${cur} / ${n}`;
+    $('zoomNo').textContent = Math.round(sf.userZoom * 100) + ' %';
+    if (!$('pageSide').hidden) document.querySelectorAll('.pthumb').forEach((el, i) => el.classList.toggle('active', i === cur - 1));
+  }
+
+  // ---- Ansichten ----
+  function showLibrary() {
+    saveNow();
+    document.body.classList.add('in-library');
+    $('library').hidden = false;
+    closeTextPanel();
+    renderLibrary();
+  }
+  function showEditor() {
+    document.body.classList.remove('in-library');
+    $('library').hidden = true;
+    page.resize();
+  }
+
+  const FOLDER_SVG = '<svg viewBox="0 0 64 48" aria-hidden="true"><path d="M4 8a4 4 0 0 1 4-4h16l6 6h26a4 4 0 0 1 4 4v26a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" fill="var(--fc)"/><path d="M4 16h56v24a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" fill="var(--fc)" opacity=".85"/></svg>';
+
+  function sortNotes(list) {
+    const by = {
+      opened: (a, b) => (b.opened || 0) - (a.opened || 0),
+      updated: (a, b) => (b.updated || 0) - (a.updated || 0),
+      name: (a, b) => a.title.localeCompare(b.title, 'de', { numeric: true }),
+    }[lib.sort];
+    return [...list].sort(by);
+  }
+
+  function renderLibrary() {
+    // Seitenleiste: Bibliothek, Zuletzt, Ordnerbaum
+    const side = $('libSide');
+    side.innerHTML = '';
+    const entry = (label, icon, key, depth = 0, color) => {
+      const b = document.createElement('button');
+      b.className = 'side-item' + (lib.folder === key && !lib.search ? ' active' : '');
+      b.style.paddingLeft = 12 + depth * 16 + 'px';
+      b.innerHTML = `<span class="ic" style="${color ? '--fc:' + color : ''}">${icon}</span><span class="lbl"></span>`;
+      b.querySelector('.lbl').textContent = label;
+      b.onclick = () => { lib.folder = key; lib.search = ''; $('libSearch').value = ''; renderLibrary(); };
+      side.appendChild(b);
+    };
+    entry('Bibliothek', '▦', null);
+    entry('Zuletzt geöffnet', '🕘', 'recent');
+    const tree = (parent, depth) => {
+      for (const f of [...state.folders].filter((x) => x.parent === parent).sort((a, b) => a.name.localeCompare(b.name, 'de', { numeric: true }))) {
+        entry(f.name, FOLDER_SVG, f.id, depth, f.color);
+        tree(f.id, depth + 1);
+      }
+    };
+    tree(null, 1);
+
+    // Pfad oben
+    const crumbs = $('libCrumbs');
+    crumbs.innerHTML = '';
+    const crumb = (label, key) => {
+      const b = document.createElement('button');
+      b.className = 'crumb';
+      b.textContent = label;
+      b.onclick = () => { lib.folder = key; lib.search = ''; $('libSearch').value = ''; renderLibrary(); };
+      crumbs.appendChild(b);
+    };
+    if (lib.search) crumb(`Suche: „${lib.search}“`, lib.folder);
+    else if (lib.folder === 'recent') crumb('Zuletzt geöffnet', 'recent');
+    else {
+      crumb('Bibliothek', null);
+      for (const f of folderPath(lib.folder)) { crumbs.insertAdjacentHTML('beforeend', '<span class="sep">›</span>'); crumb(f.name, f.id); }
+    }
+
+    // Inhalt
+    let folders, notes;
+    const q = lib.search.trim().toLowerCase();
+    if (q) {
+      folders = state.folders.filter((f) => f.name.toLowerCase().includes(q));
+      notes = state.notes.filter((n) => n.title.toLowerCase().includes(q));
+    } else if (lib.folder === 'recent') {
+      folders = [];
+      notes = [...state.notes].sort((a, b) => (b.opened || 0) - (a.opened || 0)).slice(0, 24);
+    } else {
+      folders = state.folders.filter((f) => f.parent === lib.folder);
+      notes = state.notes.filter((n) => n.folder === lib.folder);
+    }
+    folders = [...folders].sort((a, b) => a.name.localeCompare(b.name, 'de', { numeric: true }));
+    if (lib.folder !== 'recent' || q) notes = sortNotes(notes);
+
+    const grid = $('libGrid');
+    grid.innerHTML = '';
+    for (const f of folders) {
+      const count = state.notes.filter((n) => n.folder === f.id).length + state.folders.filter((x) => x.parent === f.id).length;
+      const card = document.createElement('div');
+      card.className = 'card folder';
+      card.style.setProperty('--fc', f.color || FOLDER_COLORS[0]);
+      card.innerHTML = `<div class="cover">${FOLDER_SVG}</div><div class="cap"><span class="name"></span><button class="more" title="Mehr">⋯</button></div><div class="meta">${count} ${count === 1 ? 'Element' : 'Elemente'}</div>`;
+      card.querySelector('.name').textContent = f.name;
+      card.onclick = (e) => {
+        if (e.target.closest('.more')) return folderMenu(f, e.target);
+        lib.folder = f.id; lib.search = ''; $('libSearch').value = ''; renderLibrary();
+      };
+      grid.appendChild(card);
+    }
+    for (const n of notes) {
+      const card = document.createElement('div');
+      card.className = 'card note';
+      const where = (q || lib.folder === 'recent') && n.folder ? folderPath(n.folder).map((f) => f.name).join(' › ') : '';
+      card.innerHTML = `<div class="cover">${n.thumb ? `<img alt="" src="${n.thumb}">` : '<div class="blank"></div>'}</div>
+        <div class="cap"><span class="name"></span><button class="more" title="Mehr">⋯</button></div>
+        <div class="meta">${where ? '<span class="where"></span> · ' : ''}${new Date(n.updated || n.created).toLocaleDateString('de-DE')} · ${n.pages || 1} S.</div>`;
+      card.querySelector('.name').textContent = n.title;
+      if (where) card.querySelector('.where').textContent = where;
+      card.onclick = (e) => {
+        if (e.target.closest('.more')) return noteMenu(n, e.target);
+        openNote(n.id);
+      };
+      grid.appendChild(card);
+    }
+    if (!folders.length && !notes.length) {
+      grid.innerHTML = `<p class="empty">${q ? 'Nichts gefunden.' : 'Noch leer. Lege oben rechts eine Notiz oder einen Ordner an.'}</p>`;
+    }
+    $('libNewFolder').hidden = lib.folder === 'recent';
+  }
+
+  // kleines Menü an einem Knopf
+  function popMenu(anchor, items) {
+    closeMenu();
+    const m = document.createElement('div');
+    m.id = 'popMenu';
+    for (const [label, fn, cls] of items) {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (cls) b.className = cls;
+      b.onclick = () => { closeMenu(); fn(); };
+      m.appendChild(b);
+    }
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    m.style.left = Math.min(window.innerWidth - m.offsetWidth - 8, r.left) + 'px';
+    m.style.top = Math.min(window.innerHeight - m.offsetHeight - 8, r.bottom + 4) + 'px';
+    setTimeout(() => document.addEventListener('pointerdown', closeMenuOutside, true), 0);
+  }
+  function closeMenuOutside(e) { if (!e.target.closest('#popMenu')) closeMenu(); }
+  function closeMenu() {
+    document.removeEventListener('pointerdown', closeMenuOutside, true);
+    const m = document.getElementById('popMenu');
+    if (m) m.remove();
+  }
+
+  function noteMenu(n, anchor) {
+    popMenu(anchor, [
+      ['Öffnen', () => openNote(n.id)],
+      ['Umbenennen', async () => {
+        const t = prompt('Name der Notiz', n.title);
+        if (t && t.trim()) { n.title = t.trim(); await saveLibrary(); renderLibrary(); }
+      }],
+      ['Verschieben …', () => pickFolder(`„${n.title}“ verschieben nach`, n.folder, [], async (dest) => { n.folder = dest; await saveLibrary(); renderLibrary(); })],
+      ['Duplizieren', async () => {
+        const data = (await Store.get('note:' + n.id)) || { strokes: [] };
+        const copy = { ...n, id: uid(), title: n.title + ' (Kopie)', created: Date.now(), updated: Date.now() };
+        await Store.set('note:' + copy.id, data);
+        state.notes.push(copy);
+        await saveLibrary(); renderLibrary();
+      }],
+      ['Löschen', async () => {
+        if (!confirm(`Notiz „${n.title}“ wirklich löschen? Das lässt sich nicht rückgängig machen.`)) return;
+        state.notes = state.notes.filter((x) => x.id !== n.id);
+        await Store.del('note:' + n.id);
+        if (state.noteId === n.id) state.noteId = null;
+        await saveLibrary(); renderLibrary();
+      }, 'danger'],
+    ]);
+  }
+
+  function folderMenu(f, anchor) {
+    popMenu(anchor, [
+      ['Umbenennen', async () => {
+        const t = prompt('Name des Ordners', f.name);
+        if (t && t.trim()) { f.name = t.trim(); await saveLibrary(); renderLibrary(); }
+      }],
+      ['Farbe ändern', () => {
+        const i = FOLDER_COLORS.indexOf(f.color);
+        f.color = FOLDER_COLORS[(i + 1) % FOLDER_COLORS.length];
+        saveLibrary(); renderLibrary();
+      }],
+      ['Verschieben …', () => pickFolder(`Ordner „${f.name}“ verschieben nach`, f.parent, [f.id, ...descendants(f.id)], async (dest) => { f.parent = dest; await saveLibrary(); renderLibrary(); })],
+      ['Löschen', async () => {
+        const ids = [f.id, ...descendants(f.id)];
+        const notes = state.notes.filter((n) => ids.includes(n.folder));
+        if (!confirm(`Ordner „${f.name}“ ${notes.length ? `mit ${notes.length} Notiz${notes.length === 1 ? '' : 'en'} ` : ''}wirklich löschen? Das lässt sich nicht rückgängig machen.`)) return;
+        for (const n of notes) await Store.del('note:' + n.id);
+        state.notes = state.notes.filter((n) => !ids.includes(n.folder));
+        state.folders = state.folders.filter((x) => !ids.includes(x.id));
+        if (ids.includes(lib.folder)) lib.folder = f.parent;
+        await saveLibrary(); renderLibrary();
+      }, 'danger'],
+    ]);
+  }
+
+  // Zielordner wählen (exclude: Ordner, die nicht in Frage kommen)
+  function pickFolder(title, current, exclude, done) {
+    const box = $('pickList');
+    box.innerHTML = '';
+    $('pickTitle').textContent = title;
+    const item = (label, id, depth) => {
+      const b = document.createElement('button');
+      b.className = 'side-item' + (id === current ? ' active' : '');
+      b.style.paddingLeft = 12 + depth * 18 + 'px';
+      b.textContent = label;
+      b.onclick = () => { $('pickModal').hidden = true; done(id); };
+      box.appendChild(b);
+    };
+    item('Bibliothek (oberste Ebene)', null, 0);
+    const tree = (parent, depth) => {
+      for (const f of state.folders.filter((x) => x.parent === parent && !exclude.includes(x.id)).sort((a, b) => a.name.localeCompare(b.name, 'de', { numeric: true }))) {
+        item('📁 ' + f.name, f.id, depth);
+        tree(f.id, depth + 1);
+      }
+    };
+    tree(null, 1);
+    $('pickModal').hidden = false;
+  }
+
+  async function newNote() {
+    const folder = lib.folder === 'recent' ? null : lib.folder;
+    const n = { id: uid(), title: 'Notiz ' + new Date().toLocaleDateString('de-DE'), folder, created: Date.now(), updated: Date.now(), opened: Date.now(), pages: 1 };
+    state.notes.push(n);
+    await saveLibrary();
+    await openNote(n.id);
+  }
+
+  async function newFolder() {
+    const name = prompt('Name des neuen Ordners', 'Neuer Ordner');
+    if (!name || !name.trim()) return;
+    state.folders.push({ id: uid(), name: name.trim(), parent: lib.folder === 'recent' ? null : lib.folder, color: FOLDER_COLORS[state.folders.length % FOLDER_COLORS.length] });
+    await saveLibrary();
+    renderLibrary();
   }
 
   // ---------------- Rückgängig ----------------
@@ -1061,6 +1415,8 @@
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onErase: (strokes) => pushAction({ type: 'remove', strokes }),
       onTap: (p) => openTextPanel(p),
+      pages: () => pageCount(),
+      onView: (sf) => updatePill(sf),
     });
     pad = new Surface($('pad'), {
       settings: () => state.settings,
@@ -1092,15 +1448,27 @@
 
     $('btnUndo').onclick = () => { const a = state.undo.pop(); if (a) { applyAction(a, true); state.redo.push(a); } };
     $('btnRedo').onclick = () => { const a = state.redo.pop(); if (a) { applyAction(a, false); state.undo.push(a); } };
-    $('btnNotes').onclick = () => { $('drawer').hidden = !$('drawer').hidden; };
-    $('noteTitle').onclick = () => { $('drawer').hidden = !$('drawer').hidden; };
-    $('btnNewNote').onclick = async () => {
-      const n = { id: uid(), title: 'Notiz ' + new Date().toLocaleDateString('de-DE'), updated: Date.now() };
-      state.notes.push(n);
-      await Store.set('notes', state.notes);
-      await openNote(n.id);
-      $('drawer').hidden = true;
+    // Bibliothek und Seiten
+    $('btnNotes').onclick = showLibrary;
+    $('noteTitle').onclick = async () => {
+      const n = currentNote();
+      const t = n && prompt('Name der Notiz', n.title);
+      if (t && t.trim()) { n.title = t.trim(); $('noteTitle').textContent = n.title; await saveLibrary(); }
     };
+    $('btnPages').onclick = () => {
+      $('pageSide').hidden = !$('pageSide').hidden;
+      document.body.classList.toggle('with-pages', !$('pageSide').hidden);
+      page.resize();
+      if (!$('pageSide').hidden) renderPageThumbs();
+    };
+    $('addPage').onclick = addPage;
+    $('libNewNote').onclick = newNote;
+    $('libNewFolder').onclick = newFolder;
+    $('libSettings').onclick = () => $('btnSettings').click();
+    $('libSearch').oninput = () => { lib.search = $('libSearch').value; renderLibrary(); };
+    $('libSort').value = lib.sort;
+    $('libSort').onchange = () => { lib.sort = $('libSort').value; Store.set('libView', { sort: lib.sort }); renderLibrary(); };
+    $('pickClose').onclick = () => { $('pickModal').hidden = true; };
     $('btnExport').onclick = () => { $('exportModal').hidden = false; };
     $('exportClose').onclick = () => { $('exportModal').hidden = true; };
     $('exportPng').onclick = () => { $('exportModal').hidden = true; exportPNG(); };
@@ -1181,7 +1549,9 @@
     });
     document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
 
-    await loadNotes();
+    await loadLibrary();
+    $('libSort').value = lib.sort;
+    showLibrary();
     if (!state.samples.length) showStatus('Tipp: Unter „Meine Handschrift“ zuerst ein paar Sätze schreiben', 5000);
     // Modell im Hintergrund vorladen
     setTimeout(() => engine.init().catch((e) => console.error(e)), 500);

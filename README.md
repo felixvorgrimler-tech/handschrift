@@ -20,6 +20,13 @@ Notiz-App fürs Tablet (Browser/PWA): Mit dem Stift schreiben und getippten Text
   den eigenen Notizen (0,21 Zeilenabstände je Zeichen, gemessen an ~730 Zeilen). Stiftfarben wie Notewise, Schwarz als Standard.
 - Ist ein Stift erkannt, scrollt der Finger nur und zeichnet nicht (Handballen-Schutz).
 
+## Bibliothek und Notizen (Aufbau wie Notewise)
+
+- **Bibliothek** als Startbildschirm: Ordner (verschachtelt, mit Farbe) und Notizen als Kacheln mit Vorschau der ersten
+  Seite, Seitenleiste mit Ordnerbaum und „Zuletzt geöffnet“, Suche, Sortierung, Umbenennen, Verschieben, Duplizieren, Löschen.
+- **Notizen** haben A4-Seiten: Seitenübersicht mit Vorschaubildern, „+ Seite“, Anzeige „Seite x / n“ und Zoom unten links.
+- **Zoom** mit zwei Fingern bis 500 % (um den Punkt zwischen den Fingern), gezoomt auch seitlich verschiebbar; am PC Strg + Mausrad.
+
 ## Eigene Handschrift aus Notewise (privat)
 
 Viel näher an der eigenen Schrift als die Proben aus dem Dialog: echte Zeilen aus Notewise-Notizen als Vorlage.
