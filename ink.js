@@ -368,7 +368,42 @@
   }
 
   // ---------- Zeichnen ----------
+  // Zeilen eines Textfelds (Umbruch an der Feldbreite; width = Schriftgröße)
+  function textLines(ctx, it) {
+    ctx.font = `${it.width}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+    const maxW = it.pts[1][0] - it.pts[0][0], out = [];
+    for (const para of String(it.text || '').split('\n')) {
+      let cur = '';
+      for (const w of para.split(' ')) {
+        const t = cur ? cur + ' ' + w : w;
+        if (cur && ctx.measureText(t).width > maxW) { out.push(cur); cur = w; } else cur = t;
+      }
+      out.push(cur);
+    }
+    return out;
+  }
+
+  function drawItem(ctx, it, scale) {
+    const [a, b] = it.pts;
+    if (it.type === 'image') {
+      const img = Ink.imageHook && Ink.imageHook(it.key);
+      if (img) ctx.drawImage(img, a[0] * scale, a[1] * scale, (b[0] - a[0]) * scale, (b[1] - a[1]) * scale);
+      else { ctx.fillStyle = '#eef0f3'; ctx.fillRect(a[0] * scale, a[1] * scale, (b[0] - a[0]) * scale, (b[1] - a[1]) * scale); }
+      return;
+    }
+    if (it.type === 'text' && !it.hidden) {
+      ctx.save();
+      ctx.fillStyle = it.color || '#000';
+      const lines = textLines(ctx, it);
+      ctx.font = `${it.width * scale}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+      ctx.textBaseline = 'alphabetic';
+      lines.forEach((l, i) => ctx.fillText(l, a[0] * scale, (a[1] + it.width * (1.05 + i * 1.3)) * scale));
+      ctx.restore();
+    }
+  }
+
   function drawStroke(ctx, stroke, scale = 1) {
+    if (stroke.type) return drawItem(ctx, stroke, scale);
     const pts = stroke.pts;
     if (!pts.length) return;
     const base = (stroke.width || 2.2) * scale;
@@ -421,6 +456,6 @@
 
   global.Ink = {
     toModelText, setAlphabet, hasChar: (c) => ALPHABET.has(c), prepareSample, presetSample, pointsToStrokes, drawStroke, strokeBounds,
-    offsetsToCoords, resampleStroke,
+    offsetsToCoords, resampleStroke, textLines,
   };
 })(typeof self !== 'undefined' ? self : this);

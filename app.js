@@ -521,7 +521,7 @@
       }
       const tool = this.opts.tool();
       const fingerPan = e.pointerType === 'touch' && (penSeen || !st.finger) && !this.opts.fixedHeight;
-      if (tool === 'text' && !this.opts.fixedHeight) { info.mode = e.pointerType === 'touch' ? 'tap-or-pan' : 'tap'; return; }
+      if ((tool === 'text' || tool === 'textbox') && !this.opts.fixedHeight) { info.mode = e.pointerType === 'touch' ? 'tap-or-pan' : 'tap'; return; }
       if (fingerPan) { info.mode = 'pan'; return; }
       if (tool === 'lasso' && !this.opts.fixedHeight) {
         // in die Auswahl: verschieben, Ecke unten rechts: vergrößern; sonst neues Lasso
@@ -795,6 +795,7 @@
       this.eraserAt = p;
       const hit = [];
       for (const s of this.strokes) {
+        if (s.type) continue;
         const bb = s.bounds || (s.bounds = Ink.strokeBounds(s));
         if (p[0] < bb.x0 - ERASE_R || p[0] > bb.x1 + ERASE_R || p[1] < bb.y0 - ERASE_R || p[1] > bb.y1 + ERASE_R) continue;
         if (strokeNear(s, p, ERASE_R)) hit.push(s);
@@ -923,7 +924,7 @@
     clearTimeout(saveTimer);
     const n = currentNote();
     if (!n) return;
-    const strokes = page.strokes.map((s) => ({ id: s.id, pts: s.pts, color: s.color, width: s.width }));
+    const strokes = page.strokes.map(({ bounds, hidden, ...s }) => s);
     await Store.set('note:' + n.id, { strokes });
     n.updated = Date.now();
     n.pages = Math.max(n.pages || 1, pageOf(page.contentBottom()) + 1);
@@ -982,6 +983,11 @@
       item.dataset.page = i;
       item.innerHTML = `<canvas style="width:120px;height:${h}px"></canvas><span>${i + 1}</span>`;
       item.onclick = () => goToPage(i);
+      item.oncontextmenu = (e) => { e.preventDefault(); pageMenu(i, item); };
+      const more = document.createElement('span');
+      more.className = 'pmore'; more.textContent = '⋯'; more.title = 'Seite einfügen, duplizieren, löschen';
+      more.onclick = (e) => { e.stopPropagation(); pageMenu(i, more); };
+      item.appendChild(more);
       box.appendChild(item);
       thumbObserver.observe(item);
     }
@@ -1014,6 +1020,7 @@
 
   // ---- Ansichten ----
   function showLibrary() {
+    if (finishText) finishText();
     saveNow();
     document.body.classList.add('in-library');
     $('library').hidden = false;
@@ -1389,6 +1396,7 @@
   }
 
   function setTool(tool) {
+    if (finishText) finishText();
     if (tool !== state.tool && page.sel) page.clearSelection();
     state.tool = tool;
     if (PEN_TOOLS.includes(tool)) state.lastPen = tool;
@@ -1419,8 +1427,7 @@
     m.style.top = Math.max(60, Math.min(window.innerHeight - m.offsetHeight - 8, at[1] + 14)) + 'px';
   }
   const selected = () => page.strokes.filter((s) => page.sel && page.sel.has(s.id));
-  const copyStroke = (s, dx = 0, dy = 0) => ({ id: uid(), pts: s.pts.map((q) => [q[0] + dx, q[1] + dy, q[2]]), color: s.color, width: s.width,
-    ...(s.alpha ? { alpha: s.alpha, blend: s.blend } : {}), ...(s.sharp ? { sharp: true } : {}) });
+  const copyStroke = ({ bounds, hidden, ...s }, dx = 0, dy = 0) => ({ ...s, id: uid(), pts: s.pts.map((q) => [q[0] + dx, q[1] + dy, q[2]]) });
 
   function selAction(act, color) {
     const sel = selected();
@@ -1468,6 +1475,190 @@
         const b = page.selBounds();
         selectionMenu(page.toClient(b.x0, b.y1));
       }],
+    ]);
+  }
+
+
+  // ---------------- Textfelder, Bilder, PDF, Seiten bearbeiten ----------------
+  // Textfelder und Bilder liegen als Objekte zwischen den Strichen: {type, pts: [oben links, unten rechts]}.
+  // So funktionieren Lasso (verschieben, vergrößern, kopieren), Rückgängig und Speichern wie bei Strichen.
+  // Textfeld: width = Schriftgröße, text, color. Bild: key → Blob unter 'img:<key>'.
+  const imgCache = new Map();
+  Ink.imageHook = (key) => {
+    const c = imgCache.get(key);
+    if (c && c !== 'laden') return c;
+    if (!c) {
+      imgCache.set(key, 'laden');
+      Store.get('img:' + key).then((b) => b && createImageBitmap(b)).then((bmp) => {
+        if (bmp) { imgCache.set(key, bmp); page.scheduleRender(); } else imgCache.delete(key);
+      }).catch(() => imgCache.delete(key));
+    }
+    return null;
+  };
+
+  const textMeasure = document.createElement('canvas').getContext('2d');
+  // Höhe eines Textfelds aus dem Umbruch bestimmen
+  function fitTextItem(it) {
+    const lines = Ink.textLines(textMeasure, it);
+    it.pts[1][1] = it.pts[0][1] + Math.max(1, lines.length) * it.width * 1.3 + it.width * 0.3;
+  }
+
+  // offenes Textfeld abschließen (Antippen woanders, Werkzeugwechsel, Bibliothek)
+  let finishText = null;
+  document.addEventListener('pointerdown', (e) => { if (finishText && e.target !== $('tbEditor')) finishText(); }, true);
+
+  function textboxTap(p) {
+    const hit = [...page.strokes].reverse().find((s) => s.type === 'text' && p[0] >= s.pts[0][0] && p[0] <= s.pts[1][0] && p[1] >= s.pts[0][1] && p[1] <= s.pts[1][1]);
+    if (hit) return editText(hit, false);
+    const size = Math.round(state.settings.lineSpacing * 0.55);
+    const it = { id: uid(), type: 'text', text: '', color: state.pens[state.lastPen].color, width: size,
+      pts: [[p[0], p[1] - size, 0], [Math.min(PAGE_W - 10, p[0] + 360), p[1] + size * 0.6, 0]] };
+    editText(it, true);
+  }
+
+  // Bearbeiten über ein Textfeld genau über dem Objekt
+  function editText(it, isNew) {
+    const ta = $('tbEditor');
+    const before = isNew ? null : { ...it, pts: it.pts.map((q) => q.slice()) };
+    const place = () => {
+      const [x, y] = page.toClient(it.pts[0][0], it.pts[0][1]);
+      ta.style.left = x + 'px'; ta.style.top = y + 'px';
+      ta.style.width = (it.pts[1][0] - it.pts[0][0]) * page.zoom + 'px';
+      ta.style.fontSize = it.width * page.zoom + 'px';
+      ta.style.color = it.color;
+    };
+    if (!isNew) { it.hidden = true; page.render(); }
+    ta.value = it.text;
+    ta.hidden = false;
+    place();
+    const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+    ta.oninput = grow; grow();
+    setTimeout(() => ta.focus(), 0);
+    let done = false;
+    finishText = ta.onblur = () => {
+      if (done) return;
+      done = true; finishText = null;
+      ta.hidden = true; ta.onblur = null;
+      delete it.hidden;
+      const text = ta.value.replace(/\s+$/, '');
+      if (isNew) {
+        if (!text) { page.render(); return; }
+        it.text = text; fitTextItem(it); it.bounds = Ink.strokeBounds(it);
+        page.strokes.push(it);
+        pushAction({ type: 'add', strokes: [it] });
+      } else if (!text) {
+        page.strokes = page.strokes.filter((s) => s !== it);
+        pushAction({ type: 'remove', strokes: [before] });
+      } else if (text !== before.text) {
+        it.text = text; fitTextItem(it); it.bounds = Ink.strokeBounds(it);
+        pushAction({ type: 'replace', before: [before], after: [{ ...it, pts: it.pts.map((q) => q.slice()) }] });
+      }
+      page.render();
+    };
+  }
+
+  // Bild oder PDF einfügen
+  async function insertFile(file) {
+    if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name)) return insertPdf(file);
+    const bmp = await createImageBitmap(file);
+    const key = uid();
+    await Store.set('img:' + key, file);
+    imgCache.set(key, bmp);
+    const vis = page.visibleHeight() / page.zoom, visW = page.canvas.clientWidth / page.zoom;
+    const w = Math.min(500, visW * 0.7), h = w * bmp.height / bmp.width;
+    const x = page.scrollX + (visW - w) / 2, y = page.scrollY + Math.max(20, (vis - h) / 2);
+    const it = { id: uid(), type: 'image', key, width: 1, pts: [[x, y, 0], [x + w, y + h, 0]] };
+    it.bounds = Ink.strokeBounds(it);
+    page.strokes.push(it);
+    pushAction({ type: 'add', strokes: [it] });
+    page.render();
+    setTool('lasso');
+    page.sel = new Set([it.id]);
+    page.render();
+    selectionMenu(page.toClient(x, y + h));
+    showStatus('Bild eingefügt: mit dem Lasso verschieben oder an der Ecke vergrößern', 3000);
+  }
+
+  // PDF: jede Seite wird eine neue Seite am Ende der Notiz, das PDF-Bild als Hintergrund (wie in Notewise)
+  let pdfjs = null;
+  async function insertPdf(file) {
+    if (!pdfjs) {
+      pdfjs = await import(new URL('lib/pdfjs/pdf.min.mjs', location.href).href);
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL('lib/pdfjs/pdf.worker.min.mjs', location.href).href;
+    }
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const n = currentNote();
+    await saveNow();
+    let first = pageCount();
+    // ist die letzte Seite leer, dort anfangen
+    if (!page.strokes.some((s) => pageOf(s.bounds ? s.bounds.y0 : 0) === first - 1) && !(n.backgrounds || []).some((b) => b.page === first - 1)) first--;
+    n.backgrounds = n.backgrounds || [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      showStatus(`PDF-Seite ${i}/${doc.numPages} wird eingefügt …`);
+      const pg = await doc.getPage(i);
+      const vp1 = pg.getViewport({ scale: 1 });
+      const sc = Math.min(PAGE_W / vp1.width, PAGE_H / vp1.height);
+      const vp = pg.getViewport({ scale: (2000 / PAGE_W) * sc });
+      const cv = new OffscreenCanvas(Math.round(vp.width), Math.round(vp.height));
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+      await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+      const blob = await cv.convertToBlob({ type: 'image/webp', quality: 0.75 });
+      const pno = first + i - 1;
+      await Store.set(`bg:${n.id}:${pno}`, blob);
+      n.backgrounds = n.backgrounds.filter((b) => b.page !== pno);
+      n.backgrounds.push({ page: pno, rect: [(PAGE_W - vp1.width * sc) / 2, 0, vp1.width * sc, vp1.height * sc] });
+    }
+    n.pages = Math.max(pageCount(), first + doc.numPages);
+    bgCache.clear();
+    await saveNow();
+    goToPage(first);
+    showStatus(`${doc.numPages} PDF-Seite${doc.numPages === 1 ? '' : 'n'} eingefügt`, 2500);
+  }
+
+  // Seiten einfügen, duplizieren, löschen: Striche und Hintergründe ab einer Seite verschieben
+  async function shiftPages(from, delta) {
+    const n = currentNote();
+    const dy = delta * PAGE_H;
+    for (const s of page.strokes) {
+      if (pageOf((s.bounds || Ink.strokeBounds(s)).y0) >= from) { s.pts = s.pts.map((q) => [q[0], q[1] + dy, q[2]]); s.bounds = Ink.strokeBounds(s); }
+    }
+    const bgs = (n.backgrounds || []).filter((b) => b.page >= from).sort((a, b) => (delta > 0 ? b.page - a.page : a.page - b.page));
+    for (const b of bgs) {
+      const blob = await Store.get(`bg:${n.id}:${b.page}`);
+      await Store.del(`bg:${n.id}:${b.page}`);
+      b.page += delta;
+      if (blob) await Store.set(`bg:${n.id}:${b.page}`, blob);
+    }
+    n.pages = Math.max(1, pageCount() + delta);
+    clearBackgrounds();
+  }
+  async function pageMenu(i, anchor) {
+    const n = currentNote();
+    popMenu(anchor, [
+      ['Neue Seite danach', async () => { await saveNow(); await shiftPages(i + 1, 1); await saveNow(); state.undo = []; state.redo = []; renderPageThumbs(); goToPage(i + 1); }],
+      ['Seite duplizieren', async () => {
+        await saveNow();
+        await shiftPages(i + 1, 1);
+        const copies = page.strokes.filter((s) => pageOf(s.bounds.y0) === i).map((s) => ({ ...s, id: uid(), pts: s.pts.map((q) => [q[0], q[1] + PAGE_H, q[2]]) }));
+        copies.forEach((s) => { s.bounds = Ink.strokeBounds(s); });
+        page.strokes.push(...copies);
+        const bg = (n.backgrounds || []).find((b) => b.page === i);
+        if (bg) { await Store.set(`bg:${n.id}:${i + 1}`, await Store.get(`bg:${n.id}:${i}`)); n.backgrounds.push({ page: i + 1, rect: bg.rect.slice() }); }
+        await saveNow(); state.undo = []; state.redo = []; renderPageThumbs(); goToPage(i + 1);
+      }],
+      ['Seite löschen', async () => {
+        if (pageCount() <= 1) return showStatus('Die einzige Seite kann nicht gelöscht werden', 2000);
+        if (!confirm(`Seite ${i + 1} mit allem darauf löschen? Das lässt sich nicht rückgängig machen.`)) return;
+        await saveNow();
+        page.strokes = page.strokes.filter((s) => pageOf(s.bounds.y0) !== i);
+        const bg = (n.backgrounds || []).find((b) => b.page === i);
+        if (bg) { await Store.del(`bg:${n.id}:${i}`); n.backgrounds = n.backgrounds.filter((b) => b !== bg); }
+        n.pages = Math.max(1, pageCount());
+        await shiftPages(i + 1, -1);
+        n.pages = Math.max(1, (n.pages || 1));
+        await saveNow(); state.undo = []; state.redo = []; renderPageThumbs(); page.render();
+      }, 'danger'],
     ]);
   }
 
@@ -1793,6 +1984,7 @@
     const k = NW_W / PAGE_W, pageH = PAGE_H;
     const pages = [];
     for (const s of page.strokes) {
+      if (s.type) continue;   // Textfelder und Bilder kennt der Notewise-Export (noch) nicht
       // Seite nach der Mitte des Strichs (eigene Striche können über einen Seitenwechsel reichen)
       const bb = s.bounds || Ink.strokeBounds(s);
       const i = pageOf((bb.y0 + bb.y1) / 2);
@@ -1877,7 +2069,7 @@
       onLassoTap: (p, client) => pasteAt(p, client),
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onErase: (strokes) => pushAction({ type: 'remove', strokes }),
-      onTap: (p) => openTextPanel(p),
+      onTap: (p) => (state.tool === 'textbox' ? textboxTap(p) : openTextPanel(p)),
       pages: () => pageCount(),
       onView: (sf) => updatePill(sf),
       background: (i) => pageBackground(i),
@@ -1936,6 +2128,12 @@
       if (!$('pageSide').hidden) renderPageThumbs();
     };
     $('addPage').onclick = addPage;
+    $('insertFile').onchange = async () => {
+      const f = $('insertFile').files[0];
+      $('insertFile').value = '';
+      if (!f) return;
+      try { await insertFile(f); } catch (e) { console.error(e); showStatus('Einfügen fehlgeschlagen: ' + e.message, 5000); }
+    };
     $('libNewNote').onclick = newNote;
     $('libImport').onchange = async () => {
       const f = $('libImport').files[0];
