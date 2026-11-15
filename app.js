@@ -452,6 +452,29 @@
         c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 1;
         c.beginPath(); c.arc(this.eraserAt[0], this.eraserAt[1], ERASE_R, 0, Math.PI * 2); c.stroke();
       }
+      const s = this.zoom * this.dpr;
+      if (this.lassoPts && this.lassoPts.length > 1) {
+        c.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
+        c.setLineDash([6 / this.zoom, 5 / this.zoom]);
+        c.strokeStyle = '#2f6fe0'; c.lineWidth = 1.5 / this.zoom;
+        c.fillStyle = 'rgba(47, 111, 224, .06)';
+        c.beginPath(); this.lassoPts.forEach((q, i) => (i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1])));
+        c.closePath(); c.fill(); c.stroke();
+        c.setLineDash([]);
+      }
+      if (this.sel) {
+        const b = this.selBounds();
+        if (b) {
+          c.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
+          const pad = 4;
+          c.setLineDash([5 / this.zoom, 4 / this.zoom]);
+          c.strokeStyle = '#2f6fe0'; c.lineWidth = 1.5 / this.zoom;
+          c.strokeRect(b.x0 - pad, b.y0 - pad, b.x1 - b.x0 + 2 * pad, b.y1 - b.y0 + 2 * pad);
+          c.setLineDash([]);
+          c.fillStyle = '#fff';
+          c.beginPath(); c.arc(b.x1 + pad, b.y1 + pad, 7 / this.zoom, 0, Math.PI * 2); c.fill(); c.stroke();
+        }
+      }
     }
 
     schedulePresent() {
@@ -500,6 +523,26 @@
       const fingerPan = e.pointerType === 'touch' && (penSeen || !st.finger) && !this.opts.fixedHeight;
       if (tool === 'text' && !this.opts.fixedHeight) { info.mode = e.pointerType === 'touch' ? 'tap-or-pan' : 'tap'; return; }
       if (fingerPan) { info.mode = 'pan'; return; }
+      if (tool === 'lasso' && !this.opts.fixedHeight) {
+        // in die Auswahl: verschieben, Ecke unten rechts: vergrößern; sonst neues Lasso
+        const sb = this.sel && this.selBounds();
+        if (sb && Math.hypot(p[0] - sb.x1, p[1] - sb.y1) < 14 / this.userZoom + 6) {
+          info.mode = 'sel-scale'; this.selStart(p); return;
+        }
+        if (sb && p[0] > sb.x0 - 6 && p[0] < sb.x1 + 6 && p[1] > sb.y0 - 6 && p[1] < sb.y1 + 6) {
+          info.mode = 'sel-move'; this.selStart(p); return;
+        }
+        this.clearSelection();
+        info.mode = 'lasso';
+        this.lassoPts = [p];
+        return;
+      }
+      if (tool === 'shape' && !this.opts.fixedHeight) {
+        info.mode = 'shape';
+        const ink = this.opts.ink();
+        this.live = { id: uid(), pts: shapePoints(this.opts.shape(), p, p), color: ink.color, width: ink.width, sharp: true };
+        return;
+      }
       if (e.pointerType === 'touch' && this.opts.fixedHeight && penSeen && !st.finger) return;
       const eraserBtn = e.pointerType === 'pen' && ((e.buttons & 32) || (e.buttons & 2));
       if (tool === 'eraser' || eraserBtn || (e.button === 2)) {
@@ -510,8 +553,94 @@
       }
       info.mode = 'draw';
       const ink = this.opts.ink();
-      this.live = { id: uid(), pts: [[p[0], p[1], pressureOf(e)]], color: ink.color, width: ink.width };
+      const pr = (ev) => (ink.pressure === 'fixed' ? 0.6 : pressureOf(ev));
+      this.live = { id: uid(), pts: [[p[0], p[1], pr(e)]], color: ink.color, width: ink.width };
+      if (ink.alpha) { this.live.alpha = ink.alpha; this.live.blend = 'multiply'; }
+      this.livePressure = pr;
+      this.armStraighten();
       this.schedulePresent();
+    }
+
+    // Stift am Ende kurz stillhalten: der Strich wird zur geraden Linie (wie in Notewise)
+    armStraighten() {
+      clearTimeout(this.holdTimer);
+      if (this.opts.fixedHeight || !this.live) return;
+      this.holdTimer = setTimeout(() => {
+        const s = this.live;
+        if (!s || s.pts.length < 4 || s.straight) return;
+        const a = s.pts[0], b = s.pts[s.pts.length - 1];
+        if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 8) return;
+        s.straight = true;
+        s.pts = [[a[0], a[1], 0.6], [b[0], b[1], 0.6]];
+        this.schedulePresent();
+      }, 650);
+    }
+
+    // ---- Lasso-Auswahl ----
+    selBounds() {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const s of this.strokes) {
+        if (!this.sel.has(s.id)) continue;
+        const b = s.bounds || (s.bounds = Ink.strokeBounds(s));
+        x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0); x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1);
+      }
+      return x0 < Infinity ? { x0, y0, x1, y1 } : null;
+    }
+    selStart(p) {
+      this.selOrig = this.strokes.filter((s) => this.sel.has(s.id)).map((s) => ({ ...s, pts: s.pts.map((q) => q.slice()) }));
+      this.selFrom = p;
+      this.selBox = this.selBounds();
+      this.opts.onSelectionMenu && this.opts.onSelectionMenu(null);
+    }
+    selApply(p, scale) {
+      const o = this.selFrom, box = this.selBox;
+      let f = 1, dx = p[0] - o[0], dy = p[1] - o[1];
+      if (scale) {
+        const w0 = Math.max(4, box.x1 - box.x0), h0 = Math.max(4, box.y1 - box.y0);
+        f = Math.max(0.1, Math.min((box.x1 - box.x0 + dx) / w0, (box.y1 - box.y0 + dy) / h0));
+        dx = 0; dy = 0;
+      }
+      const byId = new Map(this.selOrig.map((s) => [s.id, s]));
+      for (const s of this.strokes) {
+        const src = byId.get(s.id);
+        if (!src) continue;
+        s.pts = src.pts.map((q) => [box.x0 + (q[0] - box.x0) * f + dx, box.y0 + (q[1] - box.y0) * f + dy, q[2]]);
+        if (scale) s.width = src.width * f;
+        s.bounds = Ink.strokeBounds(s);
+      }
+      this.scheduleRender();
+    }
+    selectInLasso(poly) {
+      const inside = (x, y) => {
+        let c = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+          const [xi, yi] = poly[i], [xj, yj] = poly[j];
+          if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+        }
+        return c;
+      };
+      const xs = poly.map((q) => q[0]), ys = poly.map((q) => q[1]);
+      const bx0 = Math.min(...xs), bx1 = Math.max(...xs), by0 = Math.min(...ys), by1 = Math.max(...ys);
+      const sel = new Set();
+      for (const s of this.strokes) {
+        const b = s.bounds || (s.bounds = Ink.strokeBounds(s));
+        if (b.x1 < bx0 || b.x0 > bx1 || b.y1 < by0 || b.y0 > by1) continue;
+        let n = 0;
+        for (const q of s.pts) if (inside(q[0], q[1])) n++;
+        if (n >= s.pts.length * 0.5) sel.add(s.id);
+      }
+      return sel;
+    }
+    clearSelection() {
+      if (!this.sel) return;
+      this.sel = null;
+      this.opts.onSelectionMenu && this.opts.onSelectionMenu(null);
+      this.render();
+    }
+    // Bildschirmposition (für das Menü an der Auswahl)
+    toClient(ux, uy) {
+      const r = this.canvas.getBoundingClientRect();
+      return [r.left + (ux - this.scrollX) * this.zoom, r.top + (uy - this.scrollY) * this.zoom];
     }
 
     move(e) {
@@ -555,13 +684,36 @@
         for (const ev of list) this.eraseAt(this.toUnits(ev));
         return;
       }
+      if (info.mode === 'lasso') {
+        for (const ev of list) this.lassoPts.push(this.toUnits(ev));
+        this.schedulePresent();
+        return;
+      }
+      if (info.mode === 'sel-move' || info.mode === 'sel-scale') {
+        this.selApply(this.toUnits(e), info.mode === 'sel-scale');
+        return;
+      }
+      if (info.mode === 'shape' && this.live) {
+        this.live.pts = shapePoints(this.opts.shape(), info.start, this.toUnits(e));
+        this.schedulePresent();
+        return;
+      }
       if (info.mode === 'draw' && this.live) {
+        if (this.live.straight) {   // gerade gezogen: Endpunkt folgt dem Stift
+          const p = this.toUnits(e);
+          this.live.pts[1] = [p[0], p[1], 0.6];
+          this.schedulePresent();
+          return;
+        }
+        let far = false;
         for (const ev of list) {
           const p = this.toUnits(ev);
           const lp = this.live.pts[this.live.pts.length - 1];
           if (Math.hypot(p[0] - lp[0], p[1] - lp[1]) < 0.05) continue; // fast nur Duplikate verwerfen, das Tempo soll erhalten bleiben
-          this.live.pts.push([p[0], p[1], pressureOf(ev)]);
+          if (Math.hypot(p[0] - lp[0], p[1] - lp[1]) > 0.6) far = true;
+          this.live.pts.push([p[0], p[1], this.livePressure(ev)]);
         }
+        if (far) this.armStraighten();
         this.schedulePresent();
       }
     }
@@ -589,9 +741,47 @@
         this.eraseGesture = null;
         this.present();
       }
-      if (info.mode === 'draw' && this.live) {
+      if (info.mode === 'lasso') {
+        const poly = this.lassoPts;
+        this.lassoPts = null;
+        const sel = poly && poly.length > 3 ? this.selectInLasso(poly) : new Set();
+        if (sel.size) {
+          this.sel = sel;
+          this.render();
+          const b = this.selBounds();
+          this.opts.onSelectionMenu && this.opts.onSelectionMenu(this.toClient(b.x0, b.y1));
+        } else {
+          this.render();
+          // Antippen ohne Auswahl: Einfügen anbieten
+          if (this.opts.onLassoTap && Math.hypot(info.start[0] - info.last[0], info.start[1] - info.last[1]) < 4) this.opts.onLassoTap(info.start, [e.clientX, e.clientY]);
+        }
+        return;
+      }
+      if (info.mode === 'sel-move' || info.mode === 'sel-scale') {
+        const after = this.strokes.filter((s) => this.sel.has(s.id)).map((s) => ({ ...s, pts: s.pts.map((q) => q.slice()) }));
+        if (!cancel && this.opts.onReplace) this.opts.onReplace(this.selOrig, after);
+        this.selOrig = null;
+        const b = this.selBounds();
+        this.opts.onSelectionMenu && this.opts.onSelectionMenu(this.toClient(b.x0, b.y1));
+        this.render();
+        return;
+      }
+      if (info.mode === 'shape' && this.live) {
         const s = this.live;
         this.live = null;
+        if (!cancel && Math.hypot(info.start[0] - this.toUnits(e)[0], info.start[1] - this.toUnits(e)[1]) > 3) {
+          s.bounds = Ink.strokeBounds(s);
+          this.strokes.push(s);
+          this.opts.onStroke(s);
+        }
+        this.render();
+        return;
+      }
+      if (info.mode === 'draw' && this.live) {
+        clearTimeout(this.holdTimer);
+        const s = this.live;
+        this.live = null;
+        if (s.straight) { s.sharp = true; delete s.straight; }
         if (!cancel) {
           s.bounds = Ink.strokeBounds(s);
           this.strokes.push(s);
@@ -640,7 +830,15 @@
   // ---------------- App-Zustand ----------------
   const state = {
     settings: { paper: 'nwgrid', lineSpacing: GRID, finger: false, style: 'own', check: false, v: 2 },
-    tool: 'pen',
+    tool: 'ball',
+    lastPen: 'ball',
+    pens: {
+      ball: { color: '#000000', width: 2.1 },
+      fountain: { color: '#000000', width: 2.4 },
+      marker: { color: '#FEC800', width: 10 },
+    },
+    shape: 'line',
+    clipboard: null,
     color: '#000000',
     width: 2.1,
     notes: [],
@@ -1158,9 +1356,132 @@
     bgCache.clear();
   }
 
+
+  // ---------------- Werkzeuge: Stifte, Textmarker, Formen, Lasso (Aufbau wie Notewise) ----------------
+  // Jeder Stift merkt sich Farbe und Stärke. Kugelschreiber: gleichmäßige Linie; Füller: Druck;
+  // Textmarker: breit und durchscheinend (multipliziert, die Schrift darunter bleibt lesbar).
+  const PEN_WIDTHS = {
+    ball: [['1.4', 'fein'], ['2.1', 'mittel'], ['3.0', 'dick']],
+    fountain: [['1.6', 'fein'], ['2.4', 'mittel'], ['3.4', 'dick']],
+    marker: [['7', 'schmal'], ['10', 'mittel'], ['15', 'breit']],
+  };
+  const PEN_TOOLS = ['ball', 'fountain', 'marker'];
+  function penInk() {
+    const key = PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen;
+    const p = state.pens[key];
+    return { color: p.color, width: p.width, pressure: key === 'fountain' ? 'real' : 'fixed', alpha: key === 'marker' ? 0.38 : 0 };
+  }
+
+  function shapePoints(kind, a, b) {
+    const P = (x, y) => [x, y, 0.6];
+    if (kind === 'rect') return [P(a[0], a[1]), P(b[0], a[1]), P(b[0], b[1]), P(a[0], b[1]), P(a[0], a[1])];
+    if (kind === 'ellipse') {
+      const cx = (a[0] + b[0]) / 2, cy = (a[1] + b[1]) / 2, rx = Math.abs(b[0] - a[0]) / 2, ry = Math.abs(b[1] - a[1]) / 2;
+      return Array.from({ length: 65 }, (_, i) => P(cx + rx * Math.cos((i / 64) * 2 * Math.PI), cy + ry * Math.sin((i / 64) * 2 * Math.PI)));
+    }
+    if (kind === 'arrow') {
+      const ang = Math.atan2(b[1] - a[1], b[0] - a[0]), len = Math.min(18, Math.hypot(b[0] - a[0], b[1] - a[1]) * 0.35);
+      const h1 = P(b[0] - len * Math.cos(ang - 0.45), b[1] - len * Math.sin(ang - 0.45));
+      const h2 = P(b[0] - len * Math.cos(ang + 0.45), b[1] - len * Math.sin(ang + 0.45));
+      return [P(a[0], a[1]), P(b[0], b[1]), h1, P(b[0], b[1]), h2];
+    }
+    return [P(a[0], a[1]), P(b[0], b[1])];
+  }
+
+  function setTool(tool) {
+    if (tool !== state.tool && page.sel) page.clearSelection();
+    state.tool = tool;
+    if (PEN_TOOLS.includes(tool)) state.lastPen = tool;
+    document.querySelectorAll('.tool').forEach((x) => x.classList.toggle('active', x.dataset.tool === tool));
+    if (tool !== 'text') closeTextPanel();
+    else showStatus('Tippe auf die Stelle, an der der Text stehen soll', 2500);
+    syncPenUi();
+  }
+  // Farbpunkte und Stärke zeigen den aktuellen Stift
+  function syncPenUi() {
+    const key = PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen;
+    const p = state.pens[key];
+    state.color = p.color; state.width = p.width;
+    document.querySelectorAll('.swatch').forEach((x) => x.classList.toggle('active', x.dataset.color.toUpperCase() === p.color.toUpperCase()));
+    const sel = $('penWidth');
+    sel.innerHTML = PEN_WIDTHS[key].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+    sel.value = String(p.width);
+    if (sel.value !== String(p.width)) sel.value = PEN_WIDTHS[key][1][0];
+  }
+  function savePens() { Store.set('pens', { pens: state.pens, lastPen: state.lastPen }); }
+
+  // ---- Auswahlmenü (Lasso) ----
+  function selectionMenu(at) {
+    const m = $('selMenu');
+    if (!at) { m.hidden = true; return; }
+    m.hidden = false;
+    m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, at[0])) + 'px';
+    m.style.top = Math.max(60, Math.min(window.innerHeight - m.offsetHeight - 8, at[1] + 14)) + 'px';
+  }
+  const selected = () => page.strokes.filter((s) => page.sel && page.sel.has(s.id));
+  const copyStroke = (s, dx = 0, dy = 0) => ({ id: uid(), pts: s.pts.map((q) => [q[0] + dx, q[1] + dy, q[2]]), color: s.color, width: s.width,
+    ...(s.alpha ? { alpha: s.alpha, blend: s.blend } : {}), ...(s.sharp ? { sharp: true } : {}) });
+
+  function selAction(act, color) {
+    const sel = selected();
+    if (!sel.length) return;
+    if (act === 'delete' || act === 'cut') {
+      if (act === 'cut') state.clipboard = sel.map((s) => copyStroke(s));
+      const ids = new Set(sel.map((s) => s.id));
+      page.strokes = page.strokes.filter((s) => !ids.has(s.id));
+      pushAction({ type: 'remove', strokes: sel });
+      page.clearSelection();
+      showStatus(act === 'cut' ? 'Ausgeschnitten' : 'Gelöscht', 1200);
+    } else if (act === 'copy') {
+      state.clipboard = sel.map((s) => copyStroke(s));
+      showStatus('Kopiert, zum Einfügen mit dem Lasso auf eine leere Stelle tippen', 2500);
+    } else if (act === 'dup') {
+      const copies = sel.map((s) => ({ ...copyStroke(s, 20, 20) }));
+      copies.forEach((s) => { s.bounds = Ink.strokeBounds(s); });
+      page.strokes.push(...copies);
+      pushAction({ type: 'add', strokes: copies });
+      page.sel = new Set(copies.map((s) => s.id));
+      page.render();
+      const b = page.selBounds();
+      selectionMenu(page.toClient(b.x0, b.y1));
+    } else if (act === 'color') {
+      const before = sel.map((s) => ({ ...s, pts: s.pts.map((q) => q.slice()) }));
+      sel.forEach((s) => { s.color = color; });
+      const after = sel.map((s) => ({ ...s, pts: s.pts.map((q) => q.slice()) }));
+      pushAction({ type: 'replace', before, after });
+      page.render();
+    }
+  }
+
+  function pasteAt(p, client) {
+    if (!state.clipboard || !state.clipboard.length) return;
+    popMenu({ getBoundingClientRect: () => ({ left: client[0], bottom: client[1] }) }, [
+      ['Einfügen', () => {
+        let x0 = Infinity, y0 = Infinity;
+        for (const s of state.clipboard) for (const q of s.pts) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); }
+        const copies = state.clipboard.map((s) => copyStroke(s, p[0] - x0, p[1] - y0));
+        copies.forEach((s) => { s.bounds = Ink.strokeBounds(s); });
+        page.strokes.push(...copies);
+        pushAction({ type: 'add', strokes: copies });
+        page.sel = new Set(copies.map((s) => s.id));
+        page.render();
+        const b = page.selBounds();
+        selectionMenu(page.toClient(b.x0, b.y1));
+      }],
+    ]);
+  }
+
   // ---------------- Rückgängig ----------------
   function pushAction(a) { state.undo.push(a); state.redo = []; scheduleSave(); }
   function applyAction(a, reverse) {
+    if (page.sel) page.clearSelection();   // Auswahl passt nach Rückgängig/Wiederholen nicht mehr
+    if (a.type === 'replace') {
+      const use = new Map((reverse ? a.before : a.after).map((s) => [s.id, s]));
+      page.strokes = page.strokes.map((s) => (use.has(s.id) ? { ...use.get(s.id), pts: use.get(s.id).pts.map((q) => q.slice()), bounds: Ink.strokeBounds(use.get(s.id)) } : s));
+      page.render();
+      scheduleSave();
+      return;
+    }
     const add = (a.type === 'add') !== reverse;
     if (add) page.strokes.push(...a.strokes);
     else { const ids = new Set(a.strokes.map((s) => s.id)); page.strokes = page.strokes.filter((s) => !ids.has(s.id)); }
@@ -1549,7 +1870,11 @@
     page = new Surface($('page'), {
       settings: () => state.settings,
       tool: () => state.tool,
-      ink: () => ({ color: state.color, width: state.width }),
+      ink: () => penInk(),
+      shape: () => state.shape,
+      onReplace: (before, after) => pushAction({ type: 'replace', before, after }),
+      onSelectionMenu: (at) => selectionMenu(at),
+      onLassoTap: (p, client) => pasteAt(p, client),
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onErase: (strokes) => pushAction({ type: 'remove', strokes }),
       onTap: (p) => openTextPanel(p),
@@ -1563,27 +1888,37 @@
       singleLine: PAD_LINE,
       fixedHeight: PAD_H,
       tool: () => (state.tool === 'eraser' ? 'eraser' : 'pen'),
+      shape: () => 'line',
       ink: () => ({ color: '#1b2a4a', width: 2.1 }),
       onStroke: () => {},
       onErase: () => {},
     });
 
+    const savedPens = await Store.get('pens');
+    if (savedPens) { Object.assign(state.pens, savedPens.pens); state.lastPen = savedPens.lastPen || 'ball'; }
     document.querySelectorAll('.tool').forEach((b) => b.addEventListener('click', () => {
-      state.tool = b.dataset.tool;
-      document.querySelectorAll('.tool').forEach((x) => x.classList.toggle('active', x === b));
-      if (state.tool !== 'text') closeTextPanel();
-      else showStatus('Tippe auf die Stelle, an der der Text stehen soll', 2500);
+      // Formen-Knopf ein zweites Mal: Form wählen
+      if (b.dataset.tool === 'shape' && state.tool === 'shape') {
+        popMenu(b, [['Linie', 'line'], ['Pfeil', 'arrow'], ['Rechteck', 'rect'], ['Ellipse', 'ellipse']].map(([l, k]) => [
+          (state.shape === k ? '✓ ' : '') + l, () => { state.shape = k; b.title = 'Formen: ' + l; }]));
+        return;
+      }
+      setTool(b.dataset.tool);
     }));
     document.querySelectorAll('.swatch').forEach((b) => {
-      b.classList.toggle('active', b.dataset.color === state.color);
       b.addEventListener('click', () => {
-        state.color = b.dataset.color;
-        document.querySelectorAll('.swatch').forEach((x) => x.classList.toggle('active', x === b));
-        Store.set('ink', { color: state.color, width: state.width });
+        const key = PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen;
+        state.pens[key].color = b.dataset.color;
+        savePens(); syncPenUi();
       });
     });
-    $('penWidth').value = String(state.width);
-    $('penWidth').onchange = () => { state.width = +$('penWidth').value; Store.set('ink', { color: state.color, width: state.width }); };
+    $('penWidth').onchange = () => {
+      const key = PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen;
+      state.pens[key].width = +$('penWidth').value;
+      savePens(); syncPenUi();
+    };
+    document.querySelectorAll('#selMenu [data-act]').forEach((b) => { b.onclick = () => selAction(b.dataset.act, b.dataset.color); });
+    setTool('ball');
 
     $('btnUndo').onclick = () => { const a = state.undo.pop(); if (a) { applyAction(a, true); state.redo.push(a); } };
     $('btnRedo').onclick = () => { const a = state.redo.pop(); if (a) { applyAction(a, false); state.undo.push(a); } };

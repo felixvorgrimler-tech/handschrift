@@ -30,6 +30,10 @@ Notiz-App fürs Tablet (Browser/PWA): Mit dem Stift schreiben und getippten Text
   PDF gelesen, Druck und Textmarker-Transparenz bleiben erhalten) und je Seite ein Hintergrundbild ohne diese Striche
   (Papiervorlage, Arbeitsblätter, Fotos; WebP). In der Bibliothek „Importieren“ wählt die Datei; sie wird stückweise
   gelesen, Hintergründe werden nur für sichtbare Seiten geladen.
+- **Werkzeuge:** Kugelschreiber (gleichmäßig), Füller (Druck), Textmarker (breit, durchscheinend), jeder mit eigener
+  Farbe und Stärke; Radierer; Formen (Linie, Pfeil, Rechteck, Ellipse; Knopf nochmal tippen zum Wählen); Strich am Ende
+  kurz stillhalten macht ihn gerade. **Lasso:** einkreisen, dann verschieben, an der Ecke vergrößern, Ausschneiden,
+  Kopieren, Duplizieren, Umfärben, Löschen; mit dem Lasso auf eine leere Stelle tippen fügt ein. Alles mit Rückgängig.
 - **Zoom** mit zwei Fingern bis 500 % (um den Punkt zwischen den Fingern), gezoomt auch seitlich verschiebbar; am PC Strg + Mausrad.
 
 ## Eigene Handschrift aus Notewise (privat)

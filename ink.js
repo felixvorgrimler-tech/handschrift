@@ -375,10 +375,12 @@
     ctx.strokeStyle = ctx.fillStyle = stroke.color || '#1b2a4a';
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    if (stroke.alpha != null && stroke.alpha < 1 && pts.length > 1) {
-      // durchscheinend (Textmarker): als ein Pfad, sonst werden die Überlappungen der Teilstücke dunkler
+    if ((stroke.alpha != null && stroke.alpha < 1 || stroke.sharp) && pts.length > 1) {
+      // durchscheinend (Textmarker) oder Form/gerade Linie: als ein Pfad mit fester Breite, ohne Glättung
+      // (sonst werden Überlappungen der Teilstücke dunkler bzw. Ecken abgerundet)
       ctx.save();
-      ctx.globalAlpha = stroke.alpha;
+      if (stroke.alpha) ctx.globalAlpha = stroke.alpha;
+      if (stroke.blend) ctx.globalCompositeOperation = stroke.blend;
       ctx.lineWidth = base * (0.35 + 0.9 * (pts[0][2] ?? 0.5));
       ctx.beginPath();
       ctx.moveTo(pts[0][0] * scale, pts[0][1] * scale);

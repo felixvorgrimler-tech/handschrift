@@ -16,7 +16,7 @@ import pymupdf
 from PIL import Image
 
 PAGE_W, PAGE_H = 1000, 1414
-BG_PX = 1240                     # Breite der Hintergrundbilder für eine ganze Seite
+BG_PX = int(os.environ.get('HW_BG_PX', 2000))   # Breite der Hintergrundbilder für eine ganze Seite
 STROKE_BLOCK = re.compile(
     rb'q\s+([-\d.\s]+)rg\s+([-\d.\s]+)RG\s+([-\d.]+)\s+w\s+\d\s+J\s+\d\s+j\s+/(\w+)\s+gs\s+([-\d.\s]+)cm\s+([-\d.\s]+m(?:\s+[-\d.\s]+l)*)\s+B\s+Q\s?')
 
