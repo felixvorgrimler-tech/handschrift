@@ -391,6 +391,25 @@
       else { ctx.fillStyle = '#eef0f3'; ctx.fillRect(a[0] * scale, a[1] * scale, (b[0] - a[0]) * scale, (b[1] - a[1]) * scale); }
       return;
     }
+    if (it.type === 'audio') {
+      ctx.save();
+      ctx.fillStyle = '#23262d';
+      const x = a[0] * scale, y = a[1] * scale, w = (b[0] - a[0]) * scale, h = (b[1] - a[1]) * scale;
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, h / 2) : ctx.rect(x, y, w, h); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = `${h * 0.42}px system-ui, sans-serif`;
+      ctx.fillText('🎙 ' + (it.label || 'Aufnahme'), x + h * 0.35, y + h * 0.65);
+      ctx.restore();
+      return;
+    }
+    if (it.type === 'text' && it.bg) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.18)'; ctx.shadowBlur = 8 * scale; ctx.shadowOffsetY = 2 * scale;
+      ctx.fillStyle = it.bg;
+      const pad = it.width * 0.5;
+      ctx.fillRect((a[0] - pad) * scale, (a[1] - pad) * scale, (b[0] - a[0] + 2 * pad) * scale, (b[1] - a[1] + 2 * pad) * scale);
+      ctx.restore();
+    }
     if (it.type === 'text' && !it.hidden) {
       ctx.save();
       ctx.fillStyle = it.color || '#000';
@@ -415,6 +434,7 @@
       // (sonst werden Überlappungen der Teilstücke dunkler bzw. Ecken abgerundet)
       ctx.save();
       if (stroke.alpha) ctx.globalAlpha = stroke.alpha;
+      if (stroke.tape) ctx.globalAlpha = stroke.revealed ? 0.22 : 1;
       if (stroke.blend) ctx.globalCompositeOperation = stroke.blend;
       ctx.lineWidth = base * (0.35 + 0.9 * (pts[0][2] ?? 0.5));
       ctx.beginPath();

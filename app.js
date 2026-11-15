@@ -212,13 +212,13 @@
   // ---------------- Zeichenfläche ----------------
   function drawPaper(ctx, s, x0, y0, w, h, scrollY, opts) {
     const sx = opts.scrollX || 0;   // waagerechter Versatz (gezoomt)
-    ctx.fillStyle = '#fffdf7';
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(x0, y0, w, h);
     const ls = opts.lineSpacing;
     ctx.lineWidth = Math.max(1, s * 0.8);
     if (opts.paper === 'nwgrid' && !opts.single) {
-      ctx.strokeStyle = '#d4d4d4';
-      ctx.lineWidth = Math.max(1, s * 0.9);
+      ctx.strokeStyle = '#dcdcdc';
+      ctx.lineWidth = Math.max(1, s * 1.1);
       ctx.beginPath();
       for (let p = pageOf(scrollY); (p * PAGE_H - scrollY) * s < h; p++) {
         for (let y = p * PAGE_H + GRID_OFF; y < (p + 1) * PAGE_H; y += GRID) {
@@ -453,6 +453,21 @@
         c.beginPath(); c.arc(this.eraserAt[0], this.eraserAt[1], ERASE_R, 0, Math.PI * 2); c.stroke();
       }
       const s = this.zoom * this.dpr;
+      if (this.ruler) this.drawRuler(c, s);
+      const now = performance.now();
+      const trails = (this.laserTrails || []).filter((t) => now - t.end < 900);
+      if (this.laserLive || trails.length) {
+        c.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
+        c.lineCap = c.lineJoin = 'round';
+        for (const t of (this.laserLive ? [{ pts: this.laserLive, end: now }] : []).concat(trails)) {
+          const a = 1 - (now - t.end) / 900;
+          c.globalAlpha = Math.max(0, a);
+          c.shadowColor = '#ff2a2a'; c.shadowBlur = 12;
+          c.strokeStyle = '#ff3b30'; c.lineWidth = 4 / this.zoom + 1.5;
+          c.beginPath(); t.pts.forEach((q, i) => (i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]))); c.stroke();
+        }
+        c.globalAlpha = 1; c.shadowBlur = 0;
+      }
       if (this.lassoPts && this.lassoPts.length > 1) {
         c.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
         c.setLineDash([6 / this.zoom, 5 / this.zoom]);
@@ -521,8 +536,32 @@
       }
       const tool = this.opts.tool();
       const fingerPan = e.pointerType === 'touch' && (penSeen || !st.finger) && !this.opts.fixedHeight;
-      if ((tool === 'text' || tool === 'textbox') && !this.opts.fixedHeight) { info.mode = e.pointerType === 'touch' ? 'tap-or-pan' : 'tap'; return; }
+      if (!this.opts.fixedHeight && this.opts.readOnly && this.opts.readOnly()) {
+        // Lesemodus: nur ansehen; Klebeband lässt sich trotzdem aufdecken
+        const tape = this.tapeAt(p);
+        if (tape) { this.toggleTape(tape); info.mode = 'none'; return; }
+        info.mode = 'pan'; return;
+      }
+      // Lineal: mit dem Finger verschieben, am runden Griff drehen
+      if (this.ruler && !this.opts.fixedHeight && e.pointerType !== 'pen') {
+        const hit = this.rulerHit(p);
+        if (hit) { info.mode = hit; info.rulerStart = { ...this.ruler }; return; }
+      }
+      if (['text', 'textbox', 'sticky', 'table'].includes(tool) && !this.opts.fixedHeight) { info.mode = e.pointerType === 'touch' ? 'tap-or-pan' : 'tap'; return; }
       if (fingerPan) { info.mode = 'pan'; return; }
+      if (tool === 'laser' && !this.opts.fixedHeight) {
+        info.mode = 'laser';
+        this.laserLive = [p];
+        this.laserLoop();
+        return;
+      }
+      if (tool === 'tape' && !this.opts.fixedHeight) {
+        const hit = this.tapeAt(p);
+        if (hit) { this.toggleTape(hit); info.mode = 'none'; return; }
+        info.mode = 'shape'; info.shapeKind = 'line';
+        this.live = { id: uid(), pts: shapePoints('line', p, p), color: '#8fbce6', width: 16, sharp: true, tape: true };
+        return;
+      }
       if (tool === 'lasso' && !this.opts.fixedHeight) {
         // in die Auswahl: verschieben, Ecke unten rechts: vergrößern; sonst neues Lasso
         const sb = this.sel && this.selBounds();
@@ -538,7 +577,7 @@
         return;
       }
       if (tool === 'shape' && !this.opts.fixedHeight) {
-        info.mode = 'shape';
+        info.mode = 'shape'; info.shapeKind = this.opts.shape();
         const ink = this.opts.ink();
         this.live = { id: uid(), pts: shapePoints(this.opts.shape(), p, p), color: ink.color, width: ink.width, sharp: true };
         return;
@@ -554,6 +593,8 @@
       info.mode = 'draw';
       const ink = this.opts.ink();
       const pr = (ev) => (ink.pressure === 'fixed' ? 0.6 : pressureOf(ev));
+      this.snapRuler = this.ruler && this.rulerEdgeDist(p) < 16 / this.userZoom + 6;
+      if (this.snapRuler) { const q = this.rulerProject(p); p[0] = q[0]; p[1] = q[1]; }
       this.live = { id: uid(), pts: [[p[0], p[1], pr(e)]], color: ink.color, width: ink.width };
       if (ink.alpha) { this.live.alpha = ink.alpha; this.live.blend = 'multiply'; }
       this.livePressure = pr;
@@ -574,6 +615,70 @@
         s.pts = [[a[0], a[1], 0.6], [b[0], b[1], 0.6]];
         this.schedulePresent();
       }, 650);
+    }
+
+    // ---- Laserpointer: Spur verblasst nach knapp einer Sekunde ----
+    laserLoop() {
+      if (this.laserRaf) return;
+      const step = () => {
+        this.present();
+        const now = performance.now();
+        this.laserTrails = (this.laserTrails || []).filter((t) => now - t.end < 900);
+        if (this.laserLive || this.laserTrails.length) this.laserRaf = requestAnimationFrame(step);
+        else { this.laserRaf = 0; this.present(); }
+      };
+      this.laserRaf = requestAnimationFrame(step);
+    }
+
+    // ---- Klebeband: verdeckt, antippen deckt auf bzw. wieder zu ----
+    tapeAt(p) {
+      for (let i = this.strokes.length - 1; i >= 0; i--) {
+        const s = this.strokes[i];
+        if (s.tape && strokeNear(s, p, s.width / 2 + 4)) return s;
+      }
+      return null;
+    }
+    toggleTape(s) {
+      const before = { ...s, pts: s.pts.map((q) => q.slice()) };
+      s.revealed = !s.revealed;
+      this.opts.onReplace && this.opts.onReplace([before], [{ ...s, pts: s.pts.map((q) => q.slice()) }]);
+      this.render();
+    }
+
+    // ---- Lineal: Band mit Zentimeter-Strichen; der Stift an der oberen Kante zeichnet gerade ----
+    rulerFrame() {
+      const r = this.ruler, ca = Math.cos(r.a), sa = Math.sin(r.a);
+      return { r, ca, sa, toLocal: (p) => [(p[0] - r.x) * ca + (p[1] - r.y) * sa, -(p[0] - r.x) * sa + (p[1] - r.y) * ca] };
+    }
+    rulerHit(p) {
+      const { r, toLocal } = this.rulerFrame(), [u, v] = toLocal(p);
+      if (Math.hypot(u - r.len, v - r.w / 2) < 22) return 'ruler-rotate';
+      return u >= 0 && u <= r.len && v >= 0 && v <= r.w ? 'ruler-move' : null;
+    }
+    rulerEdgeDist(p) {
+      const { r, toLocal } = this.rulerFrame(), [u, v] = toLocal(p);
+      return u < -10 || u > r.len + 10 ? Infinity : Math.abs(v);
+    }
+    rulerProject(p) {
+      const { r, ca, sa, toLocal } = this.rulerFrame(), u = toLocal(p)[0];
+      return [r.x + u * ca, r.y + u * sa];
+    }
+    drawRuler(c, s) {
+      const r = this.ruler;
+      c.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
+      c.save();
+      c.translate(r.x, r.y); c.rotate(r.a);
+      c.fillStyle = 'rgba(40, 44, 52, .55)';
+      c.fillRect(0, 0, r.len, r.w);
+      c.strokeStyle = 'rgba(255,255,255,.9)'; c.lineWidth = 1 / this.zoom * 1.2;
+      const cm = PAGE_W / 21;   // A4-Breite = 21 cm
+      for (let i = 0, u = 0; u <= r.len; i++, u = i * cm / 10) {
+        const len = i % 10 === 0 ? 14 : i % 5 === 0 ? 9 : 5;
+        c.beginPath(); c.moveTo(u, 0); c.lineTo(u, len); c.stroke();
+      }
+      c.fillStyle = 'rgba(255,255,255,.9)';
+      c.beginPath(); c.arc(r.len, r.w / 2, 9, 0, Math.PI * 2); c.fill();
+      c.restore();
     }
 
     // ---- Lasso-Auswahl ----
@@ -684,6 +789,17 @@
         for (const ev of list) this.eraseAt(this.toUnits(ev));
         return;
       }
+      if (info.mode === 'laser') {
+        for (const ev of list) this.laserLive.push(this.toUnits(ev));
+        return;
+      }
+      if (info.mode === 'ruler-move' || info.mode === 'ruler-rotate') {
+        const p = this.toUnits(e), r0 = info.rulerStart;
+        if (info.mode === 'ruler-move') { this.ruler.x = r0.x + p[0] - info.start[0]; this.ruler.y = r0.y + p[1] - info.start[1]; }
+        else this.ruler.a = Math.atan2(p[1] - r0.y, p[0] - r0.x);
+        this.schedulePresent();
+        return;
+      }
       if (info.mode === 'lasso') {
         for (const ev of list) this.lassoPts.push(this.toUnits(ev));
         this.schedulePresent();
@@ -694,7 +810,7 @@
         return;
       }
       if (info.mode === 'shape' && this.live) {
-        this.live.pts = shapePoints(this.opts.shape(), info.start, this.toUnits(e));
+        this.live.pts = shapePoints(info.shapeKind, info.start, this.toUnits(e));
         this.schedulePresent();
         return;
       }
@@ -711,6 +827,7 @@
           const lp = this.live.pts[this.live.pts.length - 1];
           if (Math.hypot(p[0] - lp[0], p[1] - lp[1]) < 0.05) continue; // fast nur Duplikate verwerfen, das Tempo soll erhalten bleiben
           if (Math.hypot(p[0] - lp[0], p[1] - lp[1]) > 0.6) far = true;
+          if (this.snapRuler) { const q = this.rulerProject(p); p[0] = q[0]; p[1] = q[1]; }
           this.live.pts.push([p[0], p[1], this.livePressure(ev)]);
         }
         if (far) this.armStraighten();
@@ -741,6 +858,12 @@
         this.eraseGesture = null;
         this.present();
       }
+      if (info.mode === 'laser') {
+        this.laserTrails = (this.laserTrails || []).concat([{ pts: this.laserLive, end: performance.now() }]);
+        this.laserLive = null;
+        return;
+      }
+      if (info.mode === 'ruler-move' || info.mode === 'ruler-rotate' || info.mode === 'none') return;
       if (info.mode === 'lasso') {
         const poly = this.lassoPts;
         this.lassoPts = null;
@@ -1014,7 +1137,7 @@
   function updatePill(sf) {
     const n = pageCount();
     const cur = Math.min(n, pageOf(sf.scrollY + sf.visibleHeight() / sf.zoom / 2) + 1);
-    $('pageNo').textContent = `${cur} / ${n}`;
+    $('pageNo').textContent = cur; $('pageTot').textContent = n;
     $('zoomNo').textContent = Math.round(sf.userZoom * 100) + ' %';
     if (!$('pageSide').hidden) document.querySelectorAll('.pthumb').forEach((el, i) => el.classList.toggle('active', i === cur - 1));
   }
@@ -1373,7 +1496,7 @@
     fountain: [['1.6', 'fein'], ['2.4', 'mittel'], ['3.4', 'dick']],
     marker: [['7', 'schmal'], ['10', 'mittel'], ['15', 'breit']],
   };
-  const PEN_TOOLS = ['ball', 'fountain', 'marker'];
+  const PEN_TOOLS = ['ball', 'marker'];
   function penInk() {
     const key = PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen;
     const p = state.pens[key];
@@ -1423,6 +1546,13 @@
   function selectionMenu(at) {
     const m = $('selMenu');
     if (!at) { m.hidden = true; return; }
+    const audio = selected().find((s) => s.type === 'audio');
+    let play = m.querySelector('[data-play]');
+    if (audio && !play) {
+      play = document.createElement('button'); play.dataset.play = '1'; play.textContent = '▶ Abspielen';
+      m.insertBefore(play, m.firstChild);
+    }
+    if (play) { play.hidden = !audio; play.onclick = () => audio && playAudio(audio); }
     m.hidden = false;
     m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, at[0])) + 'px';
     m.style.top = Math.max(60, Math.min(window.innerHeight - m.offsetHeight - 8, at[1] + 14)) + 'px';
@@ -1762,6 +1892,121 @@
     document.body.classList.toggle('with-claude', on);
     page.resize();
     if (on) setTimeout(() => $('claudeInput').focus(), 0);
+  }
+
+
+  // ---------------- Leiste wie Notewise: Seiten, Suche, Modi, Haftnotiz, Tabelle, Lineal, Aufnahme ----------------
+  function penPopup(btn) {
+    const m = $('penPop');
+    if (!m.hidden) { m.hidden = true; return; }
+    syncPenUi();
+    m.hidden = false;
+    const r = btn.getBoundingClientRect();
+    m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.left - 40)) + 'px';
+    m.style.top = r.bottom + 10 + 'px';
+    setTimeout(() => document.addEventListener('pointerdown', function close(e) {
+      if (e.target.closest('#penPop')) return;
+      m.hidden = true; document.removeEventListener('pointerdown', close, true);
+    }, true), 0);
+  }
+
+  function openGrid() {
+    const box = $('gridPages');
+    box.innerHTML = '';
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) {
+        drawPageThumb(e.target.querySelector('canvas'), page.strokes, +e.target.dataset.page, 150);
+        io.unobserve(e.target);
+      }
+    }, { root: box, rootMargin: '200px' });
+    const n = pageCount(), cur = pageOf(page.scrollY + page.visibleHeight() / page.zoom / 2);
+    for (let i = 0; i < n; i++) {
+      const b = document.createElement('button');
+      b.className = 'pthumb' + (i === cur ? ' active' : '');
+      b.dataset.page = i;
+      b.innerHTML = `<canvas></canvas><span>${i + 1}</span>`;
+      b.onclick = () => { $('gridModal').hidden = true; goToPage(i); };
+      box.appendChild(b);
+      io.observe(b);
+    }
+    $('gridModal').hidden = false;
+  }
+
+  function stickyTap(p) {
+    const size = Math.round(state.settings.lineSpacing * 0.5);
+    const it = { id: uid(), type: 'text', text: '', color: '#222', width: size, bg: '#fff3a3',
+      pts: [[p[0], p[1], 0], [Math.min(PAGE_W - 10, p[0] + 220), p[1] + 160, 0]] };
+    editText(it, true);
+  }
+
+  // Tabelle: 3 × 3 Felder als gerade Linien (einzeln mit dem Lasso verschiebbar)
+  function insertTable(p) {
+    const w = 360, h = 150, cols = 3, rows = 3, ink = penInk();
+    const L = (x1, y1, x2, y2) => ({ id: uid(), pts: [[x1, y1, 0.6], [x2, y2, 0.6]], color: ink.color, width: 1.6, sharp: true });
+    const lines = [L(p[0], p[1], p[0] + w, p[1]), L(p[0] + w, p[1], p[0] + w, p[1] + h), L(p[0] + w, p[1] + h, p[0], p[1] + h), L(p[0], p[1] + h, p[0], p[1])];
+    for (let i = 1; i < cols; i++) lines.push(L(p[0] + (w * i) / cols, p[1], p[0] + (w * i) / cols, p[1] + h));
+    for (let j = 1; j < rows; j++) lines.push(L(p[0], p[1] + (h * j) / rows, p[0] + w, p[1] + (h * j) / rows));
+    lines.forEach((s) => { s.bounds = Ink.strokeBounds(s); });
+    page.strokes.push(...lines);
+    pushAction({ type: 'add', strokes: lines });
+    page.render();
+  }
+
+  function toggleRuler() {
+    if (page.ruler) page.ruler = null;
+    else {
+      const vis = page.visibleHeight() / page.zoom, visW = page.canvas.clientWidth / page.zoom;
+      page.ruler = { x: page.scrollX + visW * 0.15, y: page.scrollY + vis * 0.45, a: 0, len: Math.min(700, visW * 0.7), w: 60 };
+    }
+    $('btnRuler').classList.toggle('active', !!page.ruler);
+    page.present();
+  }
+
+  // Sprachaufnahme: Knopf startet/stoppt; die Aufnahme liegt als kleines Feld auf der Seite (Lasso → Abspielen)
+  let recorder = null;
+  async function toggleMic() {
+    if (recorder) { recorder.stop(); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { showStatus('Kein Zugriff aufs Mikrofon', 3000); return; }
+    const chunks = [], t0 = Date.now();
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+    recorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      recorder = null;
+      $('btnMic').classList.remove('rec');
+      const blob = new Blob(chunks, { type: chunks[0] ? chunks[0].type : 'audio/webm' });
+      const key = uid();
+      await Store.set('img:' + key, blob);
+      const x = page.scrollX + 20, y = page.scrollY + 90 / page.zoom;
+      const secs = Math.round((Date.now() - t0) / 1000);
+      const it = { id: uid(), type: 'audio', key, width: 1, label: `Aufnahme ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`,
+        pts: [[x, y, 0], [x + 150, y + 36, 0]] };
+      it.bounds = Ink.strokeBounds(it);
+      page.strokes.push(it);
+      pushAction({ type: 'add', strokes: [it] });
+      page.render();
+      showStatus('Aufnahme gespeichert: mit dem Lasso antippen → Abspielen', 3500);
+    };
+    recorder.start();
+    $('btnMic').classList.add('rec');
+    showStatus('Aufnahme läuft … nochmal tippen zum Beenden', 3000);
+  }
+  async function playAudio(it) {
+    const blob = await Store.get('img:' + it.key);
+    if (!blob) return;
+    const a = new Audio(URL.createObjectURL(blob));
+    a.play();
+  }
+
+  function moreMenu(anchor) {
+    popMenu(anchor, [
+      ['Notiz umbenennen', () => $('noteTitle').onclick()],
+      ['✦ Claude fragen', () => $('btnClaude').click()],
+      ['✍ Meine Handschrift', () => $('btnHand').click()],
+      ['Exportieren', () => $('btnExport').click()],
+      ['Einstellungen', () => $('btnSettings').click()],
+    ]);
   }
 
   // ---------------- Rückgängig ----------------
@@ -2171,7 +2416,8 @@
       onLassoTap: (p, client) => pasteAt(p, client),
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onErase: (strokes) => pushAction({ type: 'remove', strokes }),
-      onTap: (p) => (state.tool === 'textbox' ? textboxTap(p) : openTextPanel(p)),
+      onTap: (p) => (state.tool === 'textbox' ? textboxTap(p) : state.tool === 'sticky' ? stickyTap(p) : state.tool === 'table' ? insertTable(p) : openTextPanel(p)),
+      readOnly: () => state.readOnly,
       pages: () => pageCount(),
       onView: (sf) => updatePill(sf),
       background: (i) => pageBackground(i),
@@ -2189,7 +2435,7 @@
     });
 
     const savedPens = await Store.get('pens');
-    if (savedPens) { Object.assign(state.pens, savedPens.pens); state.lastPen = savedPens.lastPen || 'ball'; }
+    if (savedPens) { Object.assign(state.pens, savedPens.pens); state.lastPen = PEN_TOOLS.includes(savedPens.lastPen) ? savedPens.lastPen : 'ball'; }
     document.querySelectorAll('.tool').forEach((b) => b.addEventListener('click', () => {
       // Formen-Knopf ein zweites Mal: Form wählen
       if (b.dataset.tool === 'shape' && state.tool === 'shape') {
@@ -2197,8 +2443,33 @@
           (state.shape === k ? '✓ ' : '') + l, () => { state.shape = k; b.title = 'Formen: ' + l; }]));
         return;
       }
+      if (PEN_TOOLS.includes(b.dataset.tool) && state.tool === b.dataset.tool) return penPopup(b);
       setTool(b.dataset.tool);
     }));
+    $('btnGrid').onclick = openGrid;
+    $('gridClose').onclick = () => { $('gridModal').hidden = true; };
+    $('btnAddPage').onclick = addPage;
+    $('btnSearch').onclick = () => { showLibrary(); setTimeout(() => $('libSearch').focus(), 50); };
+    $('btnRecent').onclick = () => popMenu($('btnRecent'), [...state.notes].filter((n) => n.id !== state.noteId)
+      .sort((a, b) => (b.opened || 0) - (a.opened || 0)).slice(0, 8).map((n) => [n.title, () => openNote(n.id)]));
+    $('btnFinger').classList.toggle('active', !!state.settings.finger);
+    $('btnFinger').onclick = () => {
+      state.settings.finger = !state.settings.finger;
+      $('btnFinger').classList.toggle('active', state.settings.finger);
+      saveSettings();
+      showStatus(state.settings.finger ? 'Finger schreibt (Scrollen mit zwei Fingern)' : 'Finger scrollt, nur der Stift schreibt', 2000);
+    };
+    $('btnRead').onclick = () => {
+      state.readOnly = !state.readOnly;
+      $('btnRead').classList.toggle('active', state.readOnly);
+      showStatus(state.readOnly ? 'Lesemodus: nur ansehen' : 'Bearbeiten', 1500);
+    };
+    $('btnCollapse').onclick = () => $('pillTools').classList.toggle('collapsed');
+    $('btnMore').onclick = () => moreMenu($('btnMore'));
+    $('btnRuler').onclick = toggleRuler;
+    $('btnMic').onclick = toggleMic;
+    $('pagePrev').onclick = () => goToPage(Math.max(0, pageOf(page.scrollY + 5) - (page.scrollY % PAGE_H < 5 ? 1 : 0)));
+    $('pageNext').onclick = () => goToPage(Math.min(pageCount() - 1, pageOf(page.scrollY + 5) + 1));
     document.querySelectorAll('.swatch').forEach((b) => {
       b.addEventListener('click', () => {
         const key = PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen;

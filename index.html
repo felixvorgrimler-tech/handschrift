@@ -33,55 +33,78 @@
 </section>
 
 <header id="toolbar">
-  <button id="btnNotes" class="tb" title="Zur Bibliothek">‹</button>
-  <button id="btnPages" class="tb" title="Seitenübersicht">▤</button>
-  <span id="noteTitle" class="title" title="Umbenennen">Notiz</span>
-  <div class="group">
-    <button data-tool="lasso" class="tb tool" title="Lasso: einkreisen, dann verschieben, vergrößern, kopieren …">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-dasharray="3 2.5"><ellipse cx="12" cy="10" rx="8" ry="6"/><path d="M7 15c-2 2-1 5 2 5" stroke-dasharray="none"/></svg></button>
-    <button data-tool="ball" class="tb tool active" title="Kugelschreiber">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20l1.5-5L16 4.5a2.1 2.1 0 0 1 3 3L8.5 18z"/><path d="M14 6.5l3 3"/></svg></button>
-    <button data-tool="fountain" class="tb tool" title="Füller (Druck)">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 19l3-9 6-6 6 6-6 6z"/><path d="M5 19l5-5"/><circle cx="11" cy="13" r="1.2"/></svg></button>
-    <button data-tool="marker" class="tb tool" title="Textmarker">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 18l2-6 8-8 4 4-8 8z"/><path d="M4 21h9" stroke="#f2c200" stroke-width="3.5"/></svg></button>
-    <button data-tool="eraser" class="tb tool" title="Radierer">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 20h12"/><path d="M5.5 15.5l9-9a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12 19H8.5z"/></svg></button>
-    <button data-tool="shape" class="tb tool" title="Formen (nochmal tippen: Form wählen)">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="4.5"/><rect x="11" y="11" width="9" height="9" rx="1"/></svg></button>
-    <button data-tool="textbox" class="tb tool" title="Textfeld (tippen)">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9h8M12 9v7"/></svg></button>
-    <label class="tb" title="Bild oder PDF einfügen">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4 18l5-5 4 4 3-3 4 4"/></svg>
+  <div class="pill" id="pillNav">
+    <button id="btnNotes" class="tb" title="Zur Bibliothek"><svg viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
+    <button id="btnPages" class="tb" title="Seitenleiste"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9 4.5v15"/></svg></button>
+    <button id="btnGrid" class="tb" title="Seitenübersicht"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
+    <button id="btnAddPage" class="tb" title="Seite hinzufügen"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M12 8v8M8 12h8"/></svg></button>
+    <button id="btnSearch" class="tb" title="Suchen"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg></button>
+    <button id="btnRecent" class="tb" title="Zuletzt geöffnete Notizen"><svg viewBox="0 0 24 24"><rect x="5" y="9" width="14" height="11" rx="2"/><path d="M7 6h10M9 3.5h6"/></svg></button>
+  </div>
+  <div class="pill" id="pillTools">
+    <button id="btnUndo" class="tb" title="Rückgängig"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+    <button id="btnRedo" class="tb" title="Wiederholen"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+    <button id="btnFinger" class="tb toggle" title="Mit dem Finger schreiben"><svg viewBox="0 0 24 24"><path d="M9 11V5a1.5 1.5 0 0 1 3 0v5"/><path d="M12 10V8.5a1.5 1.5 0 0 1 3 0V11"/><path d="M15 10.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1a6 6 0 0 1-4.6-2.2L4 15.5a1.5 1.5 0 0 1 2.3-1.9L9 16"/></svg></button>
+    <span class="sep"></span>
+    <button data-tool="lasso" class="tb tool" title="Lasso"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="10" rx="8" ry="6" stroke-dasharray="3 2.5"/><path d="M7 15c-2 2-1 5 2 5"/></svg></button>
+    <button data-tool="ball" class="tb tool active" title="Stift (nochmal tippen: Farbe und Stärke)"><svg viewBox="0 0 24 24"><path d="M4 20l1.5-5L16 4.5a2.1 2.1 0 0 1 3 3L8.5 18z"/><path d="M14 6.5l3 3"/></svg></button>
+    <button data-tool="marker" class="tb tool" title="Textmarker (nochmal tippen: Farbe und Stärke)"><svg viewBox="0 0 24 24"><path d="M6 17l2-6 8-8 4 4-8 8z"/><path d="M4 21h9" class="hl"/></svg></button>
+    <button data-tool="eraser" class="tb tool" title="Radierer"><svg viewBox="0 0 24 24"><path d="M8 20h12"/><path d="M5.5 15.5l9-9a2 2 0 0 1 2.8 0l2.2 2.2a2 2 0 0 1 0 2.8L12 19H8.5z"/></svg></button>
+    <button data-tool="tape" class="tb tool" title="Klebeband: verdeckt Text zum Lernen, antippen deckt auf"><svg viewBox="0 0 24 24"><path d="M3 16L16 3l5 5L8 21z"/><path d="M7 12l5 5M10 9l5 5"/></svg></button>
+    <button data-tool="shape" class="tb tool" title="Formen (nochmal tippen: Form wählen)"><svg viewBox="0 0 24 24"><circle cx="8.5" cy="8.5" r="4.5"/><path d="M12 21l4.5-8 4.5 8z"/></svg></button>
+    <label class="tb" title="Bild oder PDF einfügen"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="M4 18l5-5 4 4 3-3 4 4"/></svg>
       <input id="insertFile" type="file" accept="image/*,application/pdf,.pdf" hidden></label>
-    <button data-tool="text" class="tb tool" title="Text in Handschrift einfügen">T<small>✍</small></button>
+    <button data-tool="textbox" class="tb tool" title="Textfeld"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M8 8h8M12 8v9"/></svg></button>
+    <button data-tool="sticky" class="tb tool" title="Haftnotiz"><svg viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5V14l-6 6H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M14 20v-4.5a1.5 1.5 0 0 1 1.5-1.5H20"/></svg></button>
+    <button data-tool="table" class="tb tool" title="Tabelle"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10M15 9.5v10"/></svg></button>
+    <button id="btnRuler" class="tb toggle" title="Lineal"><svg viewBox="0 0 24 24"><path d="M3 16L16 3l5 5L8 21z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/></svg></button>
+    <button data-tool="laser" class="tb tool" title="Laserpointer"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg></button>
+    <button id="btnMic" class="tb toggle" title="Sprachaufnahme"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
+    <button data-tool="text" class="tb tool" title="Text in deiner Handschrift (KI)"><svg viewBox="0 0 24 24"><path d="M4 6h9M8.5 6v12"/><path d="M14 17c2-1 3-5 4.5-5s-.5 5 1.5 5" /></svg></button>
+    <span class="sep"></span>
+    <button id="btnCollapse" class="tb" title="Werkzeuge einklappen"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
   </div>
-  <div class="group">
-    <button id="btnUndo" class="tb" title="Rückgängig">↶</button>
-    <button id="btnRedo" class="tb" title="Wiederholen">↷</button>
+  <div class="pill" id="pillRight">
+    <button id="btnRead" class="tb toggle" title="Lesemodus (nur ansehen)"><svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button id="btnMore" class="tb" title="Mehr"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.3" class="dot"/><circle cx="12" cy="12" r="1.3" class="dot"/><circle cx="18" cy="12" r="1.3" class="dot"/></svg></button>
   </div>
-  <div class="group" id="colors">
-    <button class="swatch active" data-color="#000000" style="--c:#000000" title="Schwarz"></button>
+  <!-- über „Mehr“ erreichbar -->
+  <span id="noteTitle" hidden>Notiz</span>
+  <button id="btnClaude" hidden></button>
+  <button id="btnHand" hidden></button>
+  <button id="btnExport" hidden></button>
+  <button id="btnSettings" hidden></button>
+</header>
+
+<!-- Farbe und Stärke (zweites Tippen auf Stift/Textmarker) -->
+<div id="penPop" hidden>
+  <div id="colors">
+    <button class="swatch" data-color="#000000" style="--c:#000000" title="Schwarz"></button>
     <button class="swatch" data-color="#D10000" style="--c:#D10000" title="Rot"></button>
     <button class="swatch" data-color="#FEC800" style="--c:#FEC800" title="Gelb"></button>
     <button class="swatch" data-color="#0009D1" style="--c:#0009D1" title="Blau"></button>
     <button class="swatch" data-color="#03D100" style="--c:#03D100" title="Grün"></button>
+    <button class="swatch" data-color="#7A4BD1" style="--c:#7A4BD1" title="Lila"></button>
+    <button class="swatch" data-color="#F07B1E" style="--c:#F07B1E" title="Orange"></button>
+    <button class="swatch" data-color="#7A7F87" style="--c:#7A7F87" title="Grau"></button>
   </div>
-  <select id="penWidth" class="tb" title="Stiftstärke">
-    <option value="1.4">fein</option>
-    <option value="2.1" selected>mittel</option>
-    <option value="3.0">dick</option>
-  </select>
-  <div class="spacer"></div>
-  <button id="btnClaude" class="tb wide" title="Claude zu dieser Seite fragen">✦ Claude</button>
-  <button id="btnHand" class="tb wide" title="Meine Handschrift">✍ Meine Handschrift</button>
-  <button id="btnExport" class="tb" title="Exportieren">⇪</button>
-  <button id="btnSettings" class="tb" title="Einstellungen">⚙</button>
-</header>
+  <select id="penWidth" title="Stärke"></select>
+</div>
+
+<!-- Seitenübersicht als Raster -->
+<div id="gridModal" class="modal" hidden>
+  <div class="modal-box">
+    <div class="modal-head"><h2>Seiten</h2><button id="gridClose" class="btn">Fertig</button></div>
+    <div id="gridPages"></div>
+  </div>
+</div>
+
+<div id="pageNav"><button id="pagePrev" title="Vorige Seite"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+  <button id="pageNext" title="Nächste Seite"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button></div>
 
 <main id="stage">
   <canvas id="page"></canvas>
-  <div id="pagePill"><span id="pageNo">1 / 1</span><span id="zoomNo">100 %</span></div>
+  <div id="pagePill"><span class="pg"><b id="pageNo">1</b><i id="pageTot">1</i></span><span id="zoomNo">100 %</span></div>
 </main>
 <div id="status" hidden></div>
 
