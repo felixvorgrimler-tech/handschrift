@@ -73,6 +73,7 @@
     <option value="3.0">dick</option>
   </select>
   <div class="spacer"></div>
+  <button id="btnClaude" class="tb wide" title="Claude zu dieser Seite fragen">✦ Claude</button>
   <button id="btnHand" class="tb wide" title="Meine Handschrift">✍ Meine Handschrift</button>
   <button id="btnExport" class="tb" title="Exportieren">⇪</button>
   <button id="btnSettings" class="tb" title="Einstellungen">⚙</button>
@@ -99,6 +100,18 @@
   <span class="sep"></span>
   <button data-act="delete" class="danger">Löschen</button>
 </div>
+
+<!-- Claude fragen -->
+<aside id="claudePanel" hidden>
+  <div class="side-head"><b>✦ Claude fragen</b><span><button id="claudeNew" class="btn" title="Neues Gespräch">Neu</button>
+    <button id="claudeClose" class="btn">✕</button></span></div>
+  <div id="claudeMsgs"></div>
+  <div class="claude-in">
+    <label class="check small"><input id="claudeWithPage" type="checkbox" checked> aktuelle Seite als Bild mitschicken</label>
+    <textarea id="claudeInput" rows="3" placeholder="Frag etwas zu deiner Seite, z. B. „Fasse die Seite zusammen“ oder „Erklär mir Aufgabe 2“"></textarea>
+    <button id="claudeSend" class="btn primary">Fragen</button>
+  </div>
+</aside>
 
 <!-- Seitenübersicht -->
 <aside id="pageSide" hidden>
@@ -201,6 +214,12 @@
     <label>Schrift-Stil für eingefügten Text
       <select id="setStyle"></select>
     </label>
+    <div class="model-box">
+      <b>Claude fragen</b>
+      <p class="hint small">Für das Claude-Fenster: eigener API-Schlüssel von console.anthropic.com (wird separat nach Verbrauch
+        abgerechnet, nicht über ein Claude-Abo). Er wird nur auf diesem Gerät gespeichert und nur an api.anthropic.com geschickt.</p>
+      <input id="setClaudeKey" type="password" autocomplete="off" placeholder="sk-ant-…">
+    </div>
     <div class="model-box">
       <b>KI-Modell</b>
       <p id="modelInfo" class="hint small"></p>

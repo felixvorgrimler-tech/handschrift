@@ -903,6 +903,7 @@
     const data = (await Store.get('note:' + id)) || { strokes: [] };
     page.strokes = data.strokes.map((s) => ({ ...s, bounds: Ink.strokeBounds(s) }));
     clearBackgrounds();
+    claudeHistory = []; $('claudeMsgs').innerHTML = '';   // Gespräch mit Claude gehört zur Notiz
     page.scrollY = 0; page.scrollX = 0;
     page.marker = null;
     page.ghosts = [];
@@ -1662,6 +1663,107 @@
     ]);
   }
 
+
+  // ---------------- Claude fragen (Fragen zu deinen Seiten) ----------------
+  // Ruft die Claude-API direkt aus dem Browser auf, mit dem eigenen API-Schlüssel (nur auf diesem Gerät gespeichert).
+  // Offizielles SDK aus lib/anthropic; die aktuelle Seite geht als Bild mit.
+  let claudeHistory = [];
+  let claudeBusy = false;
+
+  async function ensureBackground(i) {
+    const n = currentNote();
+    const b = n && (n.backgrounds || []).find((x) => x.page === i);
+    if (!b || pageBackground(i, false)) return;
+    const blob = await Store.get(`bg:${n.id}:${i}`);
+    if (blob) bgCache.set(i, await createImageBitmap(blob));
+  }
+
+  // Seite i als JPEG (Base64, ohne Präfix), 1000 Pixel breit: Hintergrund, Papier, Striche, Textfelder, Bilder
+  async function pageJpeg(i) {
+    await ensureBackground(i);
+    const cv = document.createElement('canvas');
+    drawPageThumb(cv, page.strokes, i, 1000 / (window.devicePixelRatio || 1));
+    return cv.toDataURL('image/jpeg', 0.85).split(',')[1];
+  }
+
+  function claudeBubble(role, text) {
+    const d = document.createElement('div');
+    d.className = 'cmsg ' + role;
+    d.textContent = text;
+    $('claudeMsgs').appendChild(d);
+    $('claudeMsgs').scrollTop = $('claudeMsgs').scrollHeight;
+    return d;
+  }
+
+  async function askClaude() {
+    const q = $('claudeInput').value.trim();
+    if (!q || claudeBusy) return;
+    const key = await Store.get('claudeKey');
+    if (!key) { claudeBubble('info', 'Bitte zuerst in den Einstellungen deinen Claude-API-Schlüssel eintragen.'); return; }
+    claudeBusy = true;
+    $('claudeSend').disabled = true;
+    $('claudeInput').value = '';
+    const cur = Math.min(pageCount() - 1, pageOf(page.scrollY + page.visibleHeight() / page.zoom / 2));
+    const withPage = $('claudeWithPage').checked;
+    claudeBubble('user', withPage ? `${q}\n(mit Seite ${cur + 1})` : q);
+    const out = claudeBubble('assistant', '…');
+    try {
+      const { default: Anthropic, AuthenticationError, RateLimitError, APIConnectionError, APIError } = await import(new URL('lib/anthropic/sdk.mjs', location.href).href);
+      const content = [];
+      if (withPage) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: await pageJpeg(cur) } });
+      content.push({ type: 'text', text: q });
+      claudeHistory.push({ role: 'user', content });
+      const client = new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
+      const n = currentNote();
+      try {
+        const stream = client.beta.messages.stream({
+          model: 'claude-opus-5-5',
+          max_tokens: 64000,
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default',
+          system: 'Du hilfst einem Schüler bei Fragen zu seinen Notizen (handschriftliche Mitschriften, Arbeitsblätter, '
+            + `Schulbuchseiten). Die Notiz heißt „${n ? n.title : ''}“. Wenn ein Bild einer Seite dabei ist, beziehe dich darauf. `
+            + 'Antworte auf Deutsch, klar und eher knapp; ohne Markdown-Tabellen.',
+          messages: claudeHistory,
+        });
+        let text = '';
+        for await (const ev of stream) {
+          if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') {
+            text += ev.delta.text;
+            out.textContent = text;
+            $('claudeMsgs').scrollTop = $('claudeMsgs').scrollHeight;
+          }
+        }
+        const msg = await stream.finalMessage();
+        if (msg.stop_reason === 'refusal') out.textContent = (text ? text + '\n\n' : '') + '(Claude hat diese Anfrage abgelehnt.)';
+        else if (!text) out.textContent = '(keine Antwort)';
+        claudeHistory.push({ role: 'assistant', content: msg.content });
+      } catch (e) {
+        claudeHistory.pop();   // Frage ohne Antwort nicht im Verlauf lassen
+        if (e instanceof AuthenticationError) out.textContent = 'Der API-Schlüssel wurde nicht akzeptiert. Bitte in den Einstellungen prüfen.';
+        else if (e instanceof RateLimitError) out.textContent = 'Zu viele Anfragen gerade, bitte kurz warten und nochmal versuchen.';
+        else if (e instanceof APIConnectionError) out.textContent = 'Keine Verbindung zu Claude (offline?).';
+        else if (e instanceof APIError) out.textContent = `Fehler von Claude (${e.status}): ${e.message}`;
+        else throw e;
+        out.className = 'cmsg info';
+      }
+    } catch (e) {
+      console.error(e);
+      out.textContent = 'Fehler: ' + e.message;
+      out.className = 'cmsg info';
+    }
+    claudeBusy = false;
+    $('claudeSend').disabled = false;
+  }
+
+  function toggleClaude(show) {
+    const on = show ?? $('claudePanel').hidden;
+    $('claudePanel').hidden = !on;
+    document.body.classList.toggle('with-claude', on);
+    page.resize();
+    if (on) setTimeout(() => $('claudeInput').focus(), 0);
+  }
+
   // ---------------- Rückgängig ----------------
   function pushAction(a) { state.undo.push(a); state.redo = []; scheduleSave(); }
   function applyAction(a, reverse) {
@@ -2128,6 +2230,17 @@
       if (!$('pageSide').hidden) renderPageThumbs();
     };
     $('addPage').onclick = addPage;
+    $('btnClaude').onclick = () => toggleClaude();
+    $('claudeClose').onclick = () => toggleClaude(false);
+    $('claudeNew').onclick = () => { claudeHistory = []; $('claudeMsgs').innerHTML = ''; };
+    $('claudeSend').onclick = askClaude;
+    $('claudeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askClaude(); } });
+    $('setClaudeKey').onchange = async () => {
+      const k = $('setClaudeKey').value.trim();
+      if (k) await Store.set('claudeKey', k); else await Store.del('claudeKey');
+      $('setClaudeKey').value = '';
+      $('setClaudeKey').placeholder = k ? 'gespeichert (zum Ändern neu eingeben)' : 'sk-ant-…';
+    };
     $('insertFile').onchange = async () => {
       const f = $('insertFile').files[0];
       $('insertFile').value = '';
@@ -2184,6 +2297,7 @@
       $('setLine').disabled = nwGrid();
       $('setFinger').checked = state.settings.finger;
       $('setCheck').checked = state.settings.check;
+      Store.get('claudeKey').then((k) => { $('setClaudeKey').placeholder = k ? 'gespeichert (zum Ändern neu eingeben)' : 'sk-ant-…'; });
       fillStyleSelect();
       updateModelInfo();
       $('settingsModal').hidden = false;

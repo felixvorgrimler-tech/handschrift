@@ -37,6 +37,10 @@ Notiz-App fürs Tablet (Browser/PWA): Mit dem Stift schreiben und getippten Text
 - **Textfelder** (getippter Text mit Umbruch), **Bilder** und **PDFs** einfügen (PDF-Seiten werden neue Seiten mit dem
   Blatt als Hintergrund, gerendert mit pdf.js aus `lib/pdfjs`, Apache-2.0); Textfelder und Bilder lassen sich mit dem
   Lasso verschieben, vergrößern, kopieren. Seitenleiste: je Seite „⋯“ für Neue Seite danach, Duplizieren, Löschen.
+- **Claude fragen** (Knopf „✦ Claude“): Seitenfenster für Fragen zur aktuellen Seite, die als Bild mitgeht. Ruft die
+  Claude-API direkt aus dem Browser auf (offizielles SDK `@anthropic-ai/sdk@1.3.0` in `lib/anthropic`, Modell
+  `claude-opus-5-5`, gestreamt, serverseitiger Fallback bei Ablehnung). Der eigene API-Schlüssel wird in den Einstellungen
+  eingetragen und nur auf dem Gerät gespeichert.
 - **Zoom** mit zwei Fingern bis 500 % (um den Punkt zwischen den Fingern), gezoomt auch seitlich verschiebbar; am PC Strg + Mausrad.
 
 ## Eigene Handschrift aus Notewise (privat)
