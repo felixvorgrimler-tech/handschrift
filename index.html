@@ -23,7 +23,7 @@
         <option value="updated">Zuletzt geändert</option>
         <option value="name">Name</option>
       </select>
-      <label class="btn" title="Notizen aus Notewise übernehmen (Datei von tools/notewise_import.py)">Importieren<input id="libImport" type="file" accept=".zip,application/zip" hidden></label>
+      <label class="btn" title="Notizen aus Notewise übernehmen (Datei von tools/notewise_import.py)">Importieren<input id="libImport" type="file" multiple hidden></label>
       <button id="libNewFolder" class="btn">+ Ordner</button>
       <button id="libNewNote" class="btn primary">+ Notiz</button>
       <button id="libSettings" class="tb" title="Einstellungen">⚙</button>
@@ -247,6 +247,7 @@
       <b>KI-Modell</b>
       <p id="modelInfo" class="hint small"></p>
       <p id="speedInfo" class="hint small"></p>
+      <p id="appVersion" class="hint small"></p>
       <div class="row">
         <label class="btn">Eigenes Modell laden (.hwm)<input id="modelFile" type="file" accept=".hwm,application/octet-stream" hidden></label>
         <button id="modelReset" class="btn" hidden>Standardmodell</button>

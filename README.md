@@ -30,6 +30,8 @@ Notiz-App fürs Tablet (Browser/PWA): Mit dem Stift schreiben und getippten Text
   PDF gelesen, Druck und Textmarker-Transparenz bleiben erhalten) und je Seite ein Hintergrundbild ohne diese Striche
   (Papiervorlage, Arbeitsblätter, Fotos; WebP). In der Bibliothek „Importieren“ wählt die Datei; sie wird stückweise
   gelesen, Hintergründe werden nur für sichtbare Seiten geladen.
+  `tools/split_import.py` teilt die Importdatei in eine Datei je Notiz auf (auf dem Tablet zuverlässiger als eine
+  sehr große Datei); beim Importieren lassen sich mehrere auf einmal wählen.
 - **Ansicht wie Notewise:** schwebende dunkle Leisten über der Seite (Navigation: Bibliothek, Seitenleiste,
   Seitenübersicht, Seite hinzufügen, Suche, zuletzt geöffnet; Werkzeuge; Lesemodus und „Mehr“), Seite/Zoom unten links,
   Seitenpfeile unten rechts, Werkzeugleiste einklappbar. Finger-Modus, Lesemodus, Klebeband (antippen deckt auf),

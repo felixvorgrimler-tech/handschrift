@@ -34,6 +34,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
+  const APP_VERSION = '2026-11-15c';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -2391,6 +2392,7 @@
         : `Standardmodell mit ${engine.custom.primes.length} echten Zeilen aus deinen Notizen als Vorlage`}`
       : 'Standardmodell (fremde Handschriften, nutzt deine Schriftproben als Vorlage)';
     $('modelReset').hidden = !engine.custom;
+    $('appVersion').textContent = 'App-Version: ' + APP_VERSION;
     $('speedInfo').textContent = `Geschwindigkeit: Schreib-KI ${engine.kernel === 'wasm' ? 'mit schnellem Kern (WebAssembly)' : 'mit langsamem Kern (JavaScript)'}, `
       + `Texterkennung ${self.crossOriginIsolated ? 'auf mehreren Prozessorkernen' : 'auf einem Prozessorkern'}`;
   }
@@ -2520,12 +2522,18 @@
     };
     $('libNewNote').onclick = newNote;
     $('libImport').onchange = async () => {
-      const f = $('libImport').files[0];
+      const files = [...$('libImport').files];
       $('libImport').value = '';
-      if (!f) return;
-      try { await importBundle(f); } catch (e) { console.error(e); showStatus('Import fehlgeschlagen: ' + e.message, 6000); }
+      if (!files.length) { showStatus('Keine Datei ausgewählt', 3000); return; }
+      // mehrere Importdateien nacheinander (eine je Notiz geht auf dem Tablet zuverlässiger als eine große)
+      for (const [i, f] of files.entries()) {
+        showStatus(`Lese ${files.length > 1 ? `Datei ${i + 1}/${files.length}: ` : ''}${f.name} (${Math.round(f.size / 1e6)} MB) …`);
+        try { await importBundle(f); } catch (e) { console.error(e); alert(`Import von „${f.name}“ fehlgeschlagen: ${e.message}`); }
+      }
       renderLibrary();
     };
+    // Fehler sichtbar machen statt still zu scheitern
+    window.addEventListener('unhandledrejection', (e) => showStatus('Fehler: ' + (e.reason && e.reason.message || e.reason), 6000));
     $('libNewFolder').onclick = newFolder;
     $('libSettings').onclick = () => $('btnSettings').click();
     $('libSearch').oninput = () => { lib.search = $('libSearch').value; renderLibrary(); };
