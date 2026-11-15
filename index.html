@@ -23,6 +23,7 @@
         <option value="updated">Zuletzt geändert</option>
         <option value="name">Name</option>
       </select>
+      <label class="btn" title="Notizen aus Notewise übernehmen (Datei von tools/notewise_import.py)">Importieren<input id="libImport" type="file" accept=".zip,application/zip" hidden></label>
       <button id="libNewFolder" class="btn">+ Ordner</button>
       <button id="libNewNote" class="btn primary">+ Notiz</button>
       <button id="libSettings" class="tb" title="Einstellungen">⚙</button>
@@ -65,8 +66,8 @@
 <main id="stage">
   <canvas id="page"></canvas>
   <div id="pagePill"><span id="pageNo">1 / 1</span><span id="zoomNo">100 %</span></div>
-  <div id="status" hidden></div>
 </main>
+<div id="status" hidden></div>
 
 <!-- Seitenübersicht -->
 <aside id="pageSide" hidden>

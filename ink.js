@@ -375,6 +375,18 @@
     ctx.strokeStyle = ctx.fillStyle = stroke.color || '#1b2a4a';
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    if (stroke.alpha != null && stroke.alpha < 1 && pts.length > 1) {
+      // durchscheinend (Textmarker): als ein Pfad, sonst werden die Überlappungen der Teilstücke dunkler
+      ctx.save();
+      ctx.globalAlpha = stroke.alpha;
+      ctx.lineWidth = base * (0.35 + 0.9 * (pts[0][2] ?? 0.5));
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0] * scale, pts[0][1] * scale);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0] * scale, pts[i][1] * scale);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
     if (pts.length === 1) {
       ctx.beginPath();
       ctx.arc(pts[0][0] * scale, pts[0][1] * scale, base * (0.4 + 0.5 * (pts[0][2] ?? 0.5)), 0, Math.PI * 2);

@@ -25,6 +25,11 @@ Notiz-App fürs Tablet (Browser/PWA): Mit dem Stift schreiben und getippten Text
 - **Bibliothek** als Startbildschirm: Ordner (verschachtelt, mit Farbe) und Notizen als Kacheln mit Vorschau der ersten
   Seite, Seitenleiste mit Ordnerbaum und „Zuletzt geöffnet“, Suche, Sortierung, Umbenennen, Verschieben, Duplizieren, Löschen.
 - **Notizen** haben A4-Seiten: Seitenübersicht mit Vorschaubildern, „+ Seite“, Anzeige „Seite x / n“ und Zoom unten links.
+- **Import aus Notewise:** `tools/notewise_import.py <export.zip> daten/import/notewise-import.zip` wandelt den
+  Notewise-PDF-Export um: Ordner aus den Pfaden, je Notiz die Striche als bearbeitbare Linien (aus den Strichblöcken im
+  PDF gelesen, Druck und Textmarker-Transparenz bleiben erhalten) und je Seite ein Hintergrundbild ohne diese Striche
+  (Papiervorlage, Arbeitsblätter, Fotos; WebP). In der Bibliothek „Importieren“ wählt die Datei; sie wird stückweise
+  gelesen, Hintergründe werden nur für sichtbare Seiten geladen.
 - **Zoom** mit zwei Fingern bis 500 % (um den Punkt zwischen den Fingern), gezoomt auch seitlich verschiebbar; am PC Strg + Mausrad.
 
 ## Eigene Handschrift aus Notewise (privat)

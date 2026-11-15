@@ -62,8 +62,8 @@
         });
       } catch (e) { return mem.get(k); }
     }
+    // (get liefert bei funktionierender IndexedDB deren Wert; der Arbeitsspeicher ist nur Rückfall)
     async function set(k, v) {
-      mem.set(k, v);
       try {
         const db = await open();
         await new Promise((res, rej) => {
@@ -72,7 +72,8 @@
           tx.oncomplete = res;
           tx.onerror = () => rej(tx.error);
         });
-      } catch (e) { /* bleibt im Arbeitsspeicher */ }
+        mem.delete(k);
+      } catch (e) { mem.set(k, v); /* ohne IndexedDB: nur im Arbeitsspeicher */ }
     }
     async function del(k) {
       mem.delete(k);
@@ -399,6 +400,12 @@
       });
       const top = this.scrollY, bottom = this.scrollY + Hh / s;
       b.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
+      if (this.opts.background) {
+        for (let p = pageOf(top); p * PAGE_H < bottom; p++) {
+          const bg = this.opts.background(p);
+          if (bg) b.drawImage(bg.img, bg.rect[0], p * PAGE_H + bg.rect[1], bg.rect[2], bg.rect[3]);
+        }
+      }
       for (const st2 of this.strokes) {
         const bb = st2.bounds || (st2.bounds = Ink.strokeBounds(st2));
         if (bb.y1 < top - 10 || bb.y0 > bottom + 10) continue;
@@ -696,6 +703,7 @@
     const n = noteById(id);
     const data = (await Store.get('note:' + id)) || { strokes: [] };
     page.strokes = data.strokes.map((s) => ({ ...s, bounds: Ink.strokeBounds(s) }));
+    clearBackgrounds();
     page.scrollY = 0; page.scrollX = 0;
     page.marker = null;
     page.ghosts = [];
@@ -721,7 +729,8 @@
     await Store.set('note:' + n.id, { strokes });
     n.updated = Date.now();
     n.pages = Math.max(n.pages || 1, pageOf(page.contentBottom()) + 1);
-    n.thumb = makeThumb(page.strokes);
+    const bg0 = n.backgrounds && n.backgrounds.find((x) => x.page === 0);
+    if (!bg0 || pageBackground(0, false)) n.thumb = makeThumb(page.strokes);
     await Store.set('notes', state.notes);
   }
 
@@ -736,6 +745,8 @@
     const c = cv.getContext('2d'), s = (w / PAGE_W) * dpr;
     drawPaper(c, s, 0, 0, cv.width, cv.height, i * PAGE_H, { paper: state.settings.paper, lineSpacing: state.settings.lineSpacing, noBreaks: true });
     c.setTransform(s, 0, 0, s, 0, -i * PAGE_H * s);
+    const bg = strokes === page.strokes ? pageBackground(i, false) : null;
+    if (bg) c.drawImage(bg.img, bg.rect[0], i * PAGE_H + bg.rect[1], bg.rect[2], bg.rect[3]);
     for (const st of strokes) {
       const b = st.bounds || Ink.strokeBounds(st);
       if (b.y1 < i * PAGE_H || b.y0 > (i + 1) * PAGE_H) continue;
@@ -751,18 +762,33 @@
     return cv.toDataURL('image/jpeg', 0.75);
   }
 
+  let thumbObserver = null;
   function renderPageThumbs() {
     const box = $('pageThumbs');
     box.innerHTML = '';
+    if (thumbObserver) thumbObserver.disconnect();
+    // erst zeichnen, wenn das Vorschaubild in die Seitenleiste scrollt
+    thumbObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const i = +e.target.dataset.page;
+        drawPageThumb(e.target.querySelector('canvas'), page.strokes, i, 120);
+        thumbObserver.unobserve(e.target);
+      }
+    }, { root: box, rootMargin: '300px' });
     const n = pageCount(), cur = pageOf(page.scrollY + page.visibleHeight() / page.zoom / 2);
+    const h = Math.round(120 * PAGE_H / PAGE_W);
     for (let i = 0; i < n; i++) {
       const item = document.createElement('button');
       item.className = 'pthumb' + (i === cur ? ' active' : '');
-      item.appendChild(drawPageThumb(document.createElement('canvas'), page.strokes, i, 120));
-      item.insertAdjacentHTML('beforeend', `<span>${i + 1}</span>`);
+      item.dataset.page = i;
+      item.innerHTML = `<canvas style="width:120px;height:${h}px"></canvas><span>${i + 1}</span>`;
       item.onclick = () => goToPage(i);
       box.appendChild(item);
+      thumbObserver.observe(item);
     }
+    const act = box.children[cur];
+    if (act) act.scrollIntoView({ block: 'center' });
   }
 
   function goToPage(i) {
@@ -942,6 +968,7 @@
         const data = (await Store.get('note:' + n.id)) || { strokes: [] };
         const copy = { ...n, id: uid(), title: n.title + ' (Kopie)', created: Date.now(), updated: Date.now() };
         await Store.set('note:' + copy.id, data);
+        for (const b of n.backgrounds || []) await Store.set(`bg:${copy.id}:${b.page}`, await Store.get(`bg:${n.id}:${b.page}`));
         state.notes.push(copy);
         await saveLibrary(); renderLibrary();
       }],
@@ -949,6 +976,7 @@
         if (!confirm(`Notiz „${n.title}“ wirklich löschen? Das lässt sich nicht rückgängig machen.`)) return;
         state.notes = state.notes.filter((x) => x.id !== n.id);
         await Store.del('note:' + n.id);
+        for (const b of n.backgrounds || []) await Store.del(`bg:${n.id}:${b.page}`);
         if (state.noteId === n.id) state.noteId = null;
         await saveLibrary(); renderLibrary();
       }, 'danger'],
@@ -971,7 +999,10 @@
         const ids = [f.id, ...descendants(f.id)];
         const notes = state.notes.filter((n) => ids.includes(n.folder));
         if (!confirm(`Ordner „${f.name}“ ${notes.length ? `mit ${notes.length} Notiz${notes.length === 1 ? '' : 'en'} ` : ''}wirklich löschen? Das lässt sich nicht rückgängig machen.`)) return;
-        for (const n of notes) await Store.del('note:' + n.id);
+        for (const n of notes) {
+          await Store.del('note:' + n.id);
+          for (const b of n.backgrounds || []) await Store.del(`bg:${n.id}:${b.page}`);
+        }
         state.notes = state.notes.filter((n) => !ids.includes(n.folder));
         state.folders = state.folders.filter((x) => !ids.includes(x.id));
         if (ids.includes(lib.folder)) lib.folder = f.parent;
@@ -1018,6 +1049,113 @@
     state.folders.push({ id: uid(), name: name.trim(), parent: lib.folder === 'recent' ? null : lib.folder, color: FOLDER_COLORS[state.folders.length % FOLDER_COLORS.length] });
     await saveLibrary();
     renderLibrary();
+  }
+
+
+  // ---------------- Import aus Notewise (Datei von tools/notewise_import.py) ----------------
+  // ZIP lesen, ohne die ganze Datei in den Speicher zu laden: Inhaltsverzeichnis am Ende, Einträge einzeln.
+  async function openZip(file) {
+    const tailLen = Math.min(file.size, 1 << 20);
+    const tail = new DataView(await file.slice(file.size - tailLen).arrayBuffer());
+    let eocd = -1;
+    for (let i = tailLen - 22; i >= 0; i--) if (tail.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    if (eocd < 0) throw new Error('Keine gültige ZIP-Datei');
+    const count = tail.getUint16(eocd + 10, true), cdSize = tail.getUint32(eocd + 12, true), cdOff = tail.getUint32(eocd + 16, true);
+    const cd = new DataView(await file.slice(cdOff, cdOff + cdSize).arrayBuffer());
+    const entries = new Map();
+    const dec = new TextDecoder();
+    for (let i = 0, p = 0; i < count; i++) {
+      const method = cd.getUint16(p + 10, true), csize = cd.getUint32(p + 20, true);
+      const nlen = cd.getUint16(p + 28, true), xlen = cd.getUint16(p + 30, true), clen = cd.getUint16(p + 32, true);
+      const off = cd.getUint32(p + 42, true);
+      const name = dec.decode(new Uint8Array(cd.buffer, cd.byteOffset + p + 46, nlen));
+      entries.set(name, { method, csize, off });
+      p += 46 + nlen + xlen + clen;
+    }
+    async function blob(name) {
+      const e = entries.get(name);
+      if (!e) return null;
+      const h = new DataView(await file.slice(e.off, e.off + 30).arrayBuffer());
+      const start = e.off + 30 + h.getUint16(26, true) + h.getUint16(28, true);
+      const raw = file.slice(start, start + e.csize);
+      if (e.method === 0) return raw;
+      return new Response(raw.stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
+    }
+    return { entries, blob, text: async (n) => (await blob(n)).text() };
+  }
+
+  async function importBundle(file) {
+    const zip = await openZip(file);
+    const manifest = JSON.parse(await zip.text('manifest.json'));
+    if (manifest.format !== 'handschrift-import') throw new Error('Das ist keine Importdatei für diese App');
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    // Ordner: vorhandene mit gleichem Namen an gleicher Stelle weiterverwenden
+    const fmap = new Map();
+    const pending = [...manifest.folders];
+    while (pending.length) {
+      const f = pending.shift();
+      if (f.parent && !fmap.has(f.parent)) { pending.push(f); continue; }
+      const parent = f.parent ? fmap.get(f.parent) : null;
+      let ex = state.folders.find((x) => x.name === f.name && x.parent === parent);
+      if (!ex) {
+        ex = { id: uid(), name: f.name, parent, color: FOLDER_COLORS[state.folders.length % FOLDER_COLORS.length] };
+        state.folders.push(ex);
+      }
+      fmap.set(f.id, ex.id);
+    }
+    let done = 0, skipped = 0;
+    for (const m of manifest.notes) {
+      const folder = m.folder ? fmap.get(m.folder) : null;
+      // schon einmal importiert (gleicher Name im gleichen Ordner, aus einem Import) → überspringen
+      if (state.notes.some((n) => n.title === m.title && n.folder === folder && n.imported)) { skipped++; continue; }
+      showStatus(`Importiere „${m.title}“ … (${done + 1}/${manifest.notes.length})`);
+      const id = uid();
+      const data = JSON.parse(await zip.text(`notes/${m.id}.json`));
+      const strokes = data.strokes.map((s) => ({ id: uid(), ...s }));
+      await Store.set('note:' + id, { strokes });
+      for (const b of m.backgrounds) await Store.set(`bg:${id}:${b.page}`, await zip.blob(`bg/${m.id}/${b.page}.webp`));
+      const now = Date.now();
+      state.notes.push({ id, title: m.title, folder, created: now, updated: now, opened: 0, pages: m.pages,
+        thumb: m.thumb, backgrounds: m.backgrounds, imported: true });
+      await saveLibrary();
+      done++;
+      if (!$('library').hidden) renderLibrary();
+    }
+    showStatus(`Import fertig: ${done} Notiz${done === 1 ? '' : 'en'}${skipped ? `, ${skipped} schon vorhanden` : ''}`, 5000);
+  }
+
+  // Hintergrundbilder der Seiten (Papier, Arbeitsblätter, Fotos aus Notewise): nur sichtbare Seiten laden
+  const bgCache = new Map();   // Seite -> ImageBitmap | 'laden'
+  function pageBackground(i, load = true) {
+    const n = currentNote();
+    const b = n && n.backgrounds && n.backgrounds.find((x) => x.page === i);
+    if (!b) return null;
+    const c = bgCache.get(i);
+    if (c && c !== 'laden') return { img: c, rect: b.rect };
+    if (!c && load) {
+      bgCache.set(i, 'laden');
+      const forNote = n.id;
+      Store.get(`bg:${n.id}:${i}`).then((blob) => blob && createImageBitmap(blob)).then((bmp) => {
+        if (state.noteId !== forNote || !bmp) { bgCache.delete(i); return; }
+        bgCache.set(i, bmp);
+        // höchstens 8 Seiten im Speicher, die entferntesten zuerst raus
+        if (bgCache.size > 8) {
+          const cur = pageOf(page.scrollY);
+          const far = [...bgCache.keys()].sort((a, b2) => Math.abs(b2 - cur) - Math.abs(a - cur))[0];
+          const v = bgCache.get(far);
+          if (v && v.close) v.close();
+          bgCache.delete(far);
+        }
+        page.scheduleRender();
+        const th = document.querySelector(`.pthumb[data-page="${i}"] canvas`);
+        if (th) drawPageThumb(th, page.strokes, i, 120);
+      }).catch(() => bgCache.delete(i));
+    }
+    return null;
+  }
+  function clearBackgrounds() {
+    for (const v of bgCache.values()) if (v && v.close) v.close();
+    bgCache.clear();
   }
 
   // ---------------- Rückgängig ----------------
@@ -1417,6 +1555,7 @@
       onTap: (p) => openTextPanel(p),
       pages: () => pageCount(),
       onView: (sf) => updatePill(sf),
+      background: (i) => pageBackground(i),
     });
     pad = new Surface($('pad'), {
       settings: () => state.settings,
@@ -1463,6 +1602,13 @@
     };
     $('addPage').onclick = addPage;
     $('libNewNote').onclick = newNote;
+    $('libImport').onchange = async () => {
+      const f = $('libImport').files[0];
+      $('libImport').value = '';
+      if (!f) return;
+      try { await importBundle(f); } catch (e) { console.error(e); showStatus('Import fehlgeschlagen: ' + e.message, 6000); }
+      renderLibrary();
+    };
     $('libNewFolder').onclick = newFolder;
     $('libSettings').onclick = () => $('btnSettings').click();
     $('libSearch').oninput = () => { lib.search = $('libSearch').value; renderLibrary(); };
