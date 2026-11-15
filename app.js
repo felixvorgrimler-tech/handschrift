@@ -34,7 +34,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-15c';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-15d';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -83,7 +83,19 @@
         db.transaction('kv', 'readwrite').objectStore('kv').delete(k);
       } catch (e) { /* egal */ }
     }
-    return { get, set, del };
+    // mehrere Einträge in einer Transaktion (Import: schneller und weniger anfällig auf dem Tablet)
+    async function setMany(entries) {
+      const db = await open();
+      await new Promise((res, rej) => {
+        const tx = db.transaction('kv', 'readwrite');
+        const os = tx.objectStore('kv');
+        for (const [k, v] of entries) os.put(v, k);
+        tx.oncomplete = res;
+        tx.onerror = () => rej(tx.error);
+        tx.onabort = () => rej(tx.error || new Error('Speichern abgebrochen (Speicher voll?)'));
+      });
+    }
+    return { get, set, del, setMany };
   })();
 
   // ---------------- KI-Engine (Web Worker, Rückfall: Hauptthread) ----------------
@@ -1438,12 +1450,24 @@
       const folder = m.folder ? fmap.get(m.folder) : null;
       // schon einmal importiert (gleicher Name im gleichen Ordner, aus einem Import) → überspringen
       if (state.notes.some((n) => n.title === m.title && n.folder === folder && n.imported)) { skipped++; continue; }
-      showStatus(`Importiere „${m.title}“ … (${done + 1}/${manifest.notes.length})`);
+      const head = `Importiere „${m.title}“ (${done + skipped + 1}/${manifest.notes.length})`;
+      showStatus(`${head}: Schrift …`);
       const id = uid();
       const data = JSON.parse(await zip.text(`notes/${m.id}.json`));
       const strokes = data.strokes.map((s) => ({ id: uid(), ...s }));
       await Store.set('note:' + id, { strokes });
-      for (const b of m.backgrounds) await Store.set(`bg:${id}:${b.page}`, await zip.blob(`bg/${m.id}/${b.page}.webp`));
+      // Hintergründe: erst vollständig lesen (vom Dateizugriff lösen), dann in Gruppen speichern
+      let batch = [], i = 0;
+      for (const b of m.backgrounds) {
+        const raw = await zip.blob(`bg/${m.id}/${b.page}.webp`);
+        batch.push([`bg:${id}:${b.page}`, new Blob([await raw.arrayBuffer()], { type: 'image/webp' })]);
+        i++;
+        if (batch.length >= 12 || i === m.backgrounds.length) {
+          await Store.setMany(batch);
+          batch = [];
+          showStatus(`${head}: Seite ${i}/${m.backgrounds.length}`);
+        }
+      }
       const now = Date.now();
       state.notes.push({ id, title: m.title, folder, created: now, updated: now, opened: 0, pages: m.pages,
         thumb: m.thumb, backgrounds: m.backgrounds, imported: true });
