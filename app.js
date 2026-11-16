@@ -34,7 +34,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-16b';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-16c';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -1715,6 +1715,7 @@
     state.color = p.color; state.width = p.width;
     const bar = $('penBar');
     bar.hidden = !PEN_TOOLS.includes(state.tool) || !!state.penBarOff;
+    $('btnCollapse').classList.toggle('down', bar.hidden);
     // Stärken: drei Vorgaben; eine eigene (aus den Einstellungen) ersetzt die nächstgelegene
     const ws = PEN_WIDTHS[key].map(([v]) => +v);
     if (!ws.includes(p.width)) ws[ws.reduce((bi, w, i) => (Math.abs(w - p.width) < Math.abs(ws[bi] - p.width) ? i : bi), 0)] = p.width;
@@ -1741,8 +1742,10 @@
     if (bar.hidden) return;
     const btn = document.querySelector(`.tool[data-tool="${penKey()}"]`);
     const r = btn ? btn.getBoundingClientRect() : { left: 200, bottom: 60 };
-    bar.style.left = Math.max(8, Math.min(window.innerWidth - bar.offsetWidth - 8, r.left - 28)) + 'px';
-    bar.style.top = r.bottom + 12 + 'px';
+    // linke Kante etwas links vom Stift-Knopf, direkt unter der Werkzeugleiste (wie Notewise)
+    const pill = $('pillTools').getBoundingClientRect();
+    bar.style.left = Math.round(Math.max(8, Math.min(window.innerWidth - bar.offsetWidth - 8, r.left - 6))) + 'px';
+    bar.style.top = Math.round(pill.bottom + 6) + 'px';
   }
   function drawPenPreview() {
     const cv = $('penPreview'), c = cv.getContext('2d');
@@ -3040,7 +3043,10 @@
       $('btnRead').classList.toggle('active', state.readOnly);
       showStatus(state.readOnly ? 'Lesemodus: nur ansehen' : 'Bearbeiten', 1500);
     };
-    $('btnCollapse').onclick = () => $('pillTools').classList.toggle('collapsed');
+    $('btnCollapse').onclick = () => {
+      if (!PEN_TOOLS.includes(state.tool)) { showStatus('Die Stiftleiste gibt es bei Stift und Textmarker', 2000); return; }
+      state.penBarOff = !state.penBarOff; syncPenUi();
+    };
     $('btnMore').onclick = () => moreMenu($('btnMore'));
     $('btnRuler').onclick = toggleRuler;
     $('pagePillPg').onclick = gotoPagePrompt;
