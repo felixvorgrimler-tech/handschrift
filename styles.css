@@ -201,3 +201,131 @@ body.in-library #pageNav { display: none; }
 #gridPages .pthumb canvas { width: 100% !important; height: auto !important; }
 #pageSide { top: 0; padding-top: 64px; }
 #claudePanel { top: 0; padding-top: 64px; }
+
+/* ================= Startseite wie Notewise (dunkel) ================= */
+#library { background: #000; color: #e9eaee; }
+#libSide { width: 300px; background: #141414; border-right: none; padding: 10px 16px; display: flex; flex-direction: column; transition: margin .2s; }
+#library.side-off #libSide { margin-left: -300px; }
+#library:not(.side-off) #libSideOpen { visibility: hidden; }
+.ibtn { width: 42px; height: 42px; border: none; background: none; color: #d8dade; border-radius: 50%; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ibtn:hover { background: rgba(255,255,255,.08); }
+.ibtn svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.ibtn.on { color: #5aa2ff; }
+#libSideToggle { align-self: flex-end; margin: 4px 0 18px; }
+#libNav .side-item { color: #e2e4e8; font-size: 17px; padding: 12px 16px; border-radius: 24px; gap: 16px; }
+#libNav .side-item:hover { background: rgba(255,255,255,.06); }
+#libNav .side-item.active { background: #26282c; color: #5aa2ff; font-weight: 500; }
+#libNav .side-item .ic { width: 24px; }
+#libNav .side-item .ic svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#libNav .side-title { color: #e2e4e8; font-size: 17px; padding: 26px 16px 8px; }
+.lib-main { position: relative; background: #000; }
+#libScroll { flex: 1; overflow-y: auto; }
+.lib-hero { padding: 14px 24px 18px; background: radial-gradient(120% 140% at 70% -30%, #1b3550 0%, #0b1622 45%, #000 80%); }
+.lib-top { display: flex; align-items: center; min-height: 64px; }
+.lib-tools { display: flex; align-items: center; gap: 4px; border: 1px solid #3a3d42; border-radius: 30px; padding: 4px 6px; background: rgba(0,0,0,.35); }
+.lib-tools .avatar { background: #11a3a8; color: #fff; }
+#libSearch { width: 220px; padding: 8px 14px; border: none; border-radius: 20px; background: #24262a; color: #fff; outline: none; }
+#libHello { font-family: Georgia, "Times New Roman", serif; font-size: 40px; font-weight: 700; margin: 8px 0 4px; color: #f2f3f5; letter-spacing: .2px; }
+.lib-sub { margin: 0; color: #c9cbd0; font-size: 17px; }
+.lib-row { display: flex; align-items: center; gap: 8px; padding: 6px 24px 14px; position: sticky; top: 0; background: #000; z-index: 2; }
+#libChips { display: flex; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: none; background: none; color: #9a9da4; padding: 7px 14px; border-radius: 18px; cursor: pointer; font-size: 15px; }
+.chip svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.chip.active { background: #1f6fd9; color: #fff; }
+#libCrumbs { display: flex; align-items: center; gap: 4px; font-size: 18px; font-weight: 400; }
+#libCrumbs .crumb { color: #cfd2d7; display: inline-flex; align-items: center; padding: 6px 8px; }
+#libCrumbs .crumb:last-child, #libCrumbs .crumb.cur { color: #5aa2ff; }
+#libCrumbs .crumb svg, #libCrumbs .sep svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#libCrumbs .sep { color: #cfd2d7; display: inline-flex; padding: 0 6px; }
+#libSort.lib-sort { display: inline-flex; align-items: center; gap: 6px; border: none; background: none; color: #e6e8ec; font-size: 17px; cursor: pointer; padding: 6px 10px; border-radius: 10px; }
+.lib-sort svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#libGrid { padding: 4px 24px 120px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 30px 30px; }
+#libGrid .card { position: relative; aspect-ratio: 1 / 1; border-radius: 16px; overflow: hidden; border: 1.5px solid #3b3d42; background: #1b1c1f; display: flex; flex-direction: column; }
+#libGrid .card .head { position: relative; padding: 12px 40px 10px 12px; background: #1b1c1f; flex: none; }
+#libGrid .card .when { color: #9b9ea5; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#libGrid .card .name { color: #f1f2f4; font-size: 18px; font-weight: 400; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#libGrid .card .more { position: absolute; right: 6px; top: 16px; border: none; background: none; color: #d6d8dc; font-size: 13px; letter-spacing: 1px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+#libGrid .card .more:hover { background: rgba(255,255,255,.1); }
+#libGrid .card .cover { flex: 1; border-radius: 0; box-shadow: none; background: #fff; align-items: flex-start; overflow: hidden; }
+#libGrid .card .cover img { width: 100%; height: auto; object-fit: cover; object-position: top; }
+#libGrid .card .cover .blank { background: #fff; }
+#libGrid .card:hover { border-color: #5b5e65; }
+#libGrid .card:hover .cover { box-shadow: none; }
+#libGrid .card.folder { background: var(--fc); border-color: transparent; }
+#libGrid .card.folder .head { background: none; }
+#libGrid .card.folder .when { color: rgba(255,255,255,.75); }
+#libGrid .card.folder .name, #libGrid .card.folder .more { color: #fff; }
+#libGrid .card.folder .flap { position: absolute; right: 12px; top: 37%; width: 44%; height: 14px; background: #1b1c1f; border-radius: 14px 4px 0 0; clip-path: polygon(14% 0, 100% 0, 100% 100%, 0 100%); }
+#libGrid .card.folder .count { position: absolute; left: 14px; bottom: 12px; color: rgba(255,255,255,.75); font-size: 15px; }
+#libGrid .card .favmark { position: absolute; left: 8px; bottom: 8px; color: #f5b400; font-size: 18px; text-shadow: 0 0 3px #fff; }
+#libGrid .card .tick { position: absolute; right: 10px; bottom: 10px; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #8a8d93; background: rgba(0,0,0,.5); }
+#libGrid .card.picked { border-color: #3d8bff; }
+#libGrid .card.picked .tick { background: #3d8bff; border-color: #3d8bff; }
+#libGrid .card.picked .tick::after { content: "\2713"; color: #fff; font-size: 14px; display: block; text-align: center; line-height: 20px; }
+#libGrid .empty { color: #8b8e95; }
+#library.as-list #libGrid { grid-template-columns: 1fr; gap: 8px; }
+#library.as-list #libGrid .card { aspect-ratio: auto; flex-direction: row; height: 72px; }
+#library.as-list #libGrid .card .head { flex: 1; }
+#library.as-list #libGrid .card .cover { flex: none; width: 54px; order: -1; }
+#library.as-list #libGrid .card.folder .flap, #library.as-list #libGrid .card.folder .count { display: none; }
+#libFab { position: absolute; right: 26px; bottom: 26px; width: 62px; height: 62px; border-radius: 50%; border: none; background: #2f80ed; color: #fff; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 3; }
+#libFab svg { width: 28px; height: 28px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+#libSelBar { position: absolute; left: 24px; right: 24px; bottom: 20px; display: flex; align-items: center; gap: 8px; background: #23262b; border-radius: 16px; padding: 10px 14px; z-index: 4; box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+#libSelBar .btn { background: #33363c; border: none; color: #fff; }
+#libSelBar .btn.danger { color: #ff8a80; }
+#libSelBar:not([hidden]) ~ #libFab { display: none; }
+@media (max-width: 760px) { #libSide { position: absolute; z-index: 5; height: 100%; } #libHello { font-size: 30px; } #libGrid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; } }
+
+/* dunkle Menüs wie in Notewise */
+#popMenu { background: #26282d; color: #eceef1; box-shadow: 0 10px 30px rgba(0,0,0,.5); border-radius: 14px; }
+#popMenu button { color: #eceef1; }
+#popMenu button:hover { background: rgba(255,255,255,.08); }
+#popMenu button.danger { color: #ff7b72; }
+#popMenu hr { border: none; border-top: 1px solid rgba(255,255,255,.1); margin: 4px 6px; }
+
+/* ================= Notizansicht wie Notewise ================= */
+html, body { background: #181818; }
+#stage { background: #181818; }
+#toolbar { top: 12px; left: 12px; right: 12px; gap: 12px; }
+#toolbar .pill { background: rgba(30, 31, 34, .96); border: 1px solid #3c3e43; padding: 5px 10px; gap: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+#toolbar .pill.round { padding: 5px; }
+#toolbar .tb { min-width: 44px; width: 44px; height: 44px; color: #d9dbe0; }
+#toolbar .tb svg { width: 25px; height: 25px; stroke-width: 1.6; }
+#toolbar .tb.active { background: #1f4f7d; color: #7cc0ff; }
+#toolbar .sep { height: 30px; background: rgba(255,255,255,.16); }
+#pillRight #btnRead.active { background: #3a3c41; color: #fff; }
+/* Stiftleiste */
+#penBar { position: fixed; z-index: 11; display: flex; align-items: center; gap: 6px; background: rgba(30, 31, 34, .96); border: 1px solid #3c3e43;
+  border-radius: 30px; padding: 4px 12px; box-shadow: 0 6px 18px rgba(0,0,0,.35); }
+#penBar .sep { width: 1px; height: 28px; background: rgba(255,255,255,.16); margin: 0 4px; }
+#penBar .pb { position: relative; width: 42px; height: 42px; border: none; background: none; color: #d9dbe0; border-radius: 50%; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+#penBar .pb:hover { background: rgba(255,255,255,.08); }
+#penBar .pb svg { width: 26px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+#penBar .pb.w.on::after, #penBar .pc.on::after { content: ""; position: absolute; left: 50%; bottom: 1px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: #4ea3ff; }
+#pbWidths, #pbColors { display: flex; align-items: center; gap: 4px; }
+#penBar .pc { position: relative; width: 42px; height: 42px; border: none; background: none; cursor: pointer; }
+#penBar .pc::before { content: ""; position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+/* dunkle Fenster */
+.dpop { position: fixed; z-index: 46; width: 320px; background: #232528; color: #e9ebef; border-radius: 18px; padding: 14px 16px 16px; box-shadow: 0 12px 34px rgba(0,0,0,.5); }
+.dpop-head { display: flex; align-items: center; justify-content: center; position: relative; margin-bottom: 8px; }
+.dpop-head b { font-weight: 500; font-size: 16px; }
+.dpop .x, .modal .x { position: absolute; right: 0; top: -4px; width: 32px; height: 32px; border-radius: 50%; border: none; background: #33363b; color: #ccc; cursor: pointer; }
+#penPreview { width: 100%; height: 60px; background: #1a1b1e; border-radius: 12px; display: block; margin-bottom: 10px; }
+.drow { display: flex; align-items: center; gap: 10px; margin: 10px 0; font-size: 14px; color: #d2d5da; }
+.drow input[type=range] { flex: 1; accent-color: #4ea3ff; }
+.drow .pm { width: 30px; height: 30px; border-radius: 50%; border: none; background: #33363b; color: #fff; cursor: pointer; font-size: 18px; }
+#penWidthVal { margin-left: auto; background: #33363b; border-radius: 8px; padding: 2px 10px; }
+.drow.sw { justify-content: space-between; cursor: pointer; }
+.drow.sw input { display: none; }
+.drow .tg { width: 44px; height: 26px; border-radius: 13px; background: #4a4d53; position: relative; flex: none; transition: background .15s; }
+.drow .tg::after { content: ""; position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left .15s; }
+.drow input:checked + .tg { background: #2f80ed; }
+.drow input:checked + .tg::after { left: 21px; }
+/* Seitenzahl und Zoom unten rechts */
+#pagePill { left: auto; right: 16px; bottom: 16px; background: rgba(30, 31, 34, .96); border: 1px solid #3c3e43; padding: 4px 6px; gap: 0; pointer-events: auto; border-radius: 26px; }
+#pagePill button { border: none; background: none; color: #e6e8ec; cursor: pointer; padding: 4px 14px; font: inherit; }
+#pagePill .pg { display: flex; flex-direction: column; align-items: center; line-height: 1.1; font-size: 14px; }
+#pagePill .pg i { font-size: 13px; }
+#pagePill #zoomNo { border-left: 1px solid rgba(255,255,255,.2); font-size: 16px; padding-left: 16px; }
+#pageNav { right: 10px; bottom: 90px; background: rgba(30, 31, 34, .96); border: 1px solid #3c3e43; }
+body.with-pages #pagePill { left: auto; }

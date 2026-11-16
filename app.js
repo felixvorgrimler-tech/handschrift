@@ -34,7 +34,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-15d';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-16a';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -321,21 +321,32 @@
       // nach dem Drehen: Position in die neuen Grenzen holen
       if (!this.opts.fixedHeight) {
         this.scrollY = Math.min(this.scrollY, this.maxScroll());
-        this.scrollX = Math.min(this.scrollX, this.maxScrollX());
+        this.scrollX = this.clampX(this.scrollX);
       }
       this.render();
     }
 
     maxScrollX() { return Math.max(0, PAGE_W - this.canvas.clientWidth / this.zoom); }
+    // waagerecht: schmaler als der Bildschirm → Seite mittig (negativer Versatz), sonst innerhalb der Seite
+    clampX(x) {
+      const view = this.canvas.clientWidth / this.zoom;
+      if (view >= PAGE_W) return -(view - PAGE_W) / 2;
+      return Math.min(Math.max(0, x), PAGE_W - view);
+    }
+    // herauszoomen bis die ganze Seitenhöhe zu sehen ist (wie Notewise), nur in der Notiz selbst
+    minZoom() {
+      if (!this.opts.pages) return 1;
+      return Math.min(1, Math.max(0.15, (this.visibleHeight() - 40) / (PAGE_H * this.fit)));
+    }
 
     // Zoomen um einen Bildschirmpunkt (cx, cy): der Punkt darunter bleibt an seiner Stelle
     zoomAt(userZoom, cx, cy) {
       if (this.opts.fixedHeight) return;
       const r = this.canvas.getBoundingClientRect();
       const ux = (cx - r.left) / this.zoom + this.scrollX, uy = (cy - r.top) / this.zoom + this.scrollY;
-      this.userZoom = Math.min(5, Math.max(1, userZoom));
+      this.userZoom = Math.min(5, Math.max(this.minZoom(), userZoom));
       this.zoom = this.fit * this.userZoom;
-      this.scrollX = Math.min(Math.max(0, ux - (cx - r.left) / this.zoom), this.maxScrollX());
+      this.scrollX = this.clampX(ux - (cx - r.left) / this.zoom);
       this.scrollY = Math.min(Math.max(0, uy - (cy - r.top) / this.zoom), Math.max(this.maxScroll(), 0));
       this.scheduleRender();
     }
@@ -373,7 +384,7 @@
       if (this.opts.fixedHeight) return false;
       const before = this.scrollY, beforeX = this.scrollX;
       this.scrollY = Math.min(Math.max(0, this.scrollY + dy), Math.max(this.maxScroll(), this.scrollY));
-      this.scrollX = Math.min(Math.max(0, this.scrollX + dx), this.maxScrollX());
+      this.scrollX = this.clampX(this.scrollX + dx);
       const moved = this.scrollY !== before || this.scrollX !== beforeX;
       if (moved) { this.showBar = performance.now(); this.scheduleRender(); }
       return moved;
@@ -409,7 +420,7 @@
       const st = this.settings;
       drawPaper(b, s, 0, 0, W, Hh, this.scrollY, {
         paper: this.opts.paper ? this.opts.paper() : st.paper, lineSpacing: st.lineSpacing,
-        single: this.opts.singleLine, scrollX: this.scrollX,
+        single: this.opts.singleLine, scrollX: this.scrollX, noBreaks: !!this.opts.pages,
       });
       const top = this.scrollY, bottom = this.scrollY + Hh / s;
       b.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
@@ -423,6 +434,15 @@
         const bb = st2.bounds || (st2.bounds = Ink.strokeBounds(st2));
         if (bb.y1 < top - 10 || bb.y0 > bottom + 10) continue;
         Ink.drawStroke(b, st2, 1);
+      }
+      // wie Notewise: dunkle Fläche neben und zwischen den Seiten (deckt auch Überstehendes ab)
+      if (this.opts.pages) {
+        const n = Math.max(this.opts.pages(), 1), gap = 10 / this.zoom, far = 1e5;
+        b.fillStyle = '#181818';
+        b.fillRect(-far, top - 10, far, bottom - top + 20);
+        b.fillRect(PAGE_W, top - 10, far, bottom - top + 20);
+        for (let p = Math.max(1, pageOf(top)); p * PAGE_H < bottom + gap && p < n; p++) b.fillRect(-far, p * PAGE_H - gap / 2, 2 * far, gap);
+        if (n * PAGE_H < bottom) b.fillRect(-far, n * PAGE_H, 2 * far, bottom - n * PAGE_H + 10);
       }
       for (const g of this.ghosts) {
         b.fillStyle = 'rgba(80, 90, 120, .35)';
@@ -618,7 +638,7 @@
     // Stift am Ende kurz stillhalten: der Strich wird zur geraden Linie (wie in Notewise)
     armStraighten() {
       clearTimeout(this.holdTimer);
-      if (this.opts.fixedHeight || !this.live) return;
+      if (this.opts.fixedHeight || !this.live || this.settings.holdShape === false) return;
       this.holdTimer = setTimeout(() => {
         const s = this.live;
         if (!s || s.pts.length < 4 || s.straight) return;
@@ -775,9 +795,9 @@
         const mx = (a.lastClient[0] + b.lastClient[0]) / 2, my = (a.lastClient[1] + b.lastClient[1]) / 2;
         const r = this.canvas.getBoundingClientRect();
         // der Punkt, der zu Beginn zwischen den Fingern lag, bleibt zwischen den Fingern
-        this.userZoom = Math.min(5, Math.max(1, p.z0 * d / p.d0));
+        this.userZoom = Math.min(5, Math.max(this.minZoom(), p.z0 * d / p.d0));
         this.zoom = this.fit * this.userZoom;
-        this.scrollX = Math.min(Math.max(0, p.ux - (mx - r.left) / this.zoom), this.maxScrollX());
+        this.scrollX = this.clampX(p.ux - (mx - r.left) / this.zoom);
         this.scrollY = Math.min(Math.max(0, p.uy - (my - r.top) / this.zoom), Math.max(this.maxScroll(), 0));
         this.showBar = performance.now();
         this.scheduleRender();
@@ -1000,7 +1020,8 @@
   // Ordner: {id, name, parent (null = oberste Ebene), color}
   // Notiz:  {id, title, folder, created, updated, opened, pages, thumb}; Striche liegen unter 'note:<id>'
   const FOLDER_COLORS = ['#4a90e2', '#e5534b', '#f2a33a', '#3fb27f', '#9b6bd6', '#7a7f87'];
-  const lib = { folder: null, search: '', sort: 'opened' };   // folder: null = Bibliothek, 'recent' = Zuletzt
+  // folder: null = Startseite, 'recent' = Zuletzt; filter (nur Startseite): 'all' | 'fav' | 'trash'; select: Set der ausgewählten Notizen
+  const lib = { folder: null, search: '', sort: 'opened', filter: 'all', select: null, list: false };
 
   const noteById = (id) => state.notes.find((n) => n.id === id);
   const folderById = (id) => state.folders.find((f) => f.id === id);
@@ -1017,6 +1038,7 @@
     }
     const s = (await Store.get('libView')) || {};
     lib.sort = s.sort || 'opened';
+    lib.list = !!s.list;
   }
   const saveLibrary = () => Promise.all([Store.set('notes', state.notes), Store.set('folders', state.folders)]);
 
@@ -1132,6 +1154,12 @@
     if (act) act.scrollIntoView({ block: 'center' });
   }
 
+  function gotoPagePrompt() {
+    const t = prompt(`Gehe zu Seite (1–${pageCount()})`, '');
+    const i = parseInt(t, 10);
+    if (i >= 1 && i <= pageCount()) goToPage(i - 1);
+  }
+
   function goToPage(i) {
     page.scrollY = Math.min(i * PAGE_H, page.maxScroll());
     page.render();
@@ -1151,7 +1179,7 @@
     const n = pageCount();
     const cur = Math.min(n, pageOf(sf.scrollY + sf.visibleHeight() / sf.zoom / 2) + 1);
     $('pageNo').textContent = cur; $('pageTot').textContent = n;
-    $('zoomNo').textContent = Math.round(sf.userZoom * 100) + ' %';
+    $('zoomNo').textContent = Math.round(sf.userZoom * 100) + '%';
     if (!$('pageSide').hidden) document.querySelectorAll('.pthumb').forEach((el, i) => el.classList.toggle('active', i === cur - 1));
   }
 
@@ -1176,109 +1204,191 @@
     const by = {
       opened: (a, b) => (b.opened || 0) - (a.opened || 0),
       updated: (a, b) => (b.updated || 0) - (a.updated || 0),
+      created: (a, b) => (b.created || 0) - (a.created || 0),
       name: (a, b) => a.title.localeCompare(b.title, 'de', { numeric: true }),
     }[lib.sort];
     return [...list].sort(by);
   }
 
-  function renderLibrary() {
-    // Seitenleiste: Bibliothek, Zuletzt, Ordnerbaum
-    const side = $('libSide');
-    side.innerHTML = '';
-    const entry = (label, icon, key, depth = 0, color) => {
-      const b = document.createElement('button');
-      b.className = 'side-item' + (lib.folder === key && !lib.search ? ' active' : '');
-      b.style.paddingLeft = 12 + depth * 16 + 'px';
-      b.innerHTML = `<span class="ic" style="${color ? '--fc:' + color : ''}">${icon}</span><span class="lbl"></span>`;
-      b.querySelector('.lbl').textContent = label;
-      b.onclick = () => { lib.folder = key; lib.search = ''; $('libSearch').value = ''; renderLibrary(); };
-      side.appendChild(b);
-    };
-    entry('Bibliothek', '▦', null);
-    entry('Zuletzt geöffnet', '🕘', 'recent');
-    const tree = (parent, depth) => {
-      for (const f of [...state.folders].filter((x) => x.parent === parent).sort((a, b) => a.name.localeCompare(b.name, 'de', { numeric: true }))) {
-        entry(f.name, FOLDER_SVG, f.id, depth, f.color);
-        tree(f.id, depth + 1);
-      }
-    };
-    tree(null, 1);
+  // Zeitangabe wie in Notewise: „Heute, 12:01“, „Gestern, 15:51“, „Donnerstag, 14:54“, „3. Nov., 12:24“
+  function fmtWhen(ts) {
+    if (!ts) return '';
+    const d = new Date(ts), now = new Date();
+    const hm = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    const day0 = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const days = Math.round((day0(now) - day0(d)) / 864e5);
+    if (days === 0) return `Heute, ${hm}`;
+    if (days === 1) return `Gestern, ${hm}`;
+    if (days > 1 && days < 7) return `${d.toLocaleDateString('de-DE', { weekday: 'long' })}, ${hm}`;
+    const opt = d.getFullYear() === now.getFullYear() ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' };
+    return `${d.toLocaleDateString('de-DE', opt)}, ${hm}`;
+  }
+  const liveNotes = () => state.notes.filter((n) => !n.trashed);
+  const SORT_LABEL = { opened: 'Zuletzt geöffnet', updated: 'Zuletzt geändert', created: 'Erstellt', name: 'Name' };
+  const ICON = {
+    home: '<svg viewBox="0 0 24 24"><path d="M4 10.5L12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-4v-6h-5v6h-4A1.5 1.5 0 0 1 4 19z"/></svg>',
+    hand: '<svg viewBox="0 0 24 24"><path d="M4 20c3-1 4-6 6.5-6S12 19 15 19s3.5-5 5-5"/><path d="M14 4l4 4-7 7H7v-4z"/></svg>',
+    star: '<svg viewBox="0 0 24 24"><path d="M12 3.8l2.5 5.1 5.6.8-4 3.9.9 5.6-5-2.6-5 2.6.9-5.6-4-3.9 5.6-.8z"/></svg>',
+    trash: '<svg viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5"/></svg>',
+    all: '<svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>',
+    clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+  };
 
-    // Pfad oben
-    const crumbs = $('libCrumbs');
-    crumbs.innerHTML = '';
-    const crumb = (label, key) => {
+  function libGo(folder, filter = 'all') {
+    lib.folder = folder; lib.filter = filter; lib.search = ''; lib.select = null;
+    $('libSearch').value = ''; $('libSearch').hidden = true;
+    renderLibrary();
+    $('libScroll').scrollTop = 0;
+  }
+
+  function renderLibrary() {
+    lib.filter = lib.filter || 'all';
+    // Begrüßung
+    const h = new Date().getHours();
+    const name = (state.settings.userName || '').trim();
+    $('libHello').textContent = (h < 11 ? 'Guten Morgen' : h < 18 ? 'Guten Tag' : 'Guten Abend') + (name ? ', ' + name : '');
+
+    // Seitenleiste
+    const nav = $('libNav');
+    nav.innerHTML = '';
+    const entry = (label, icon, active, fn) => {
       const b = document.createElement('button');
-      b.className = 'crumb';
-      b.textContent = label;
-      b.onclick = () => { lib.folder = key; lib.search = ''; $('libSearch').value = ''; renderLibrary(); };
-      crumbs.appendChild(b);
+      b.className = 'side-item' + (active ? ' active' : '');
+      b.innerHTML = `<span class="ic">${icon}</span><span class="lbl"></span>`;
+      b.querySelector('.lbl').textContent = label;
+      b.onclick = fn;
+      nav.appendChild(b);
     };
-    if (lib.search) crumb(`Suche: „${lib.search}“`, lib.folder);
-    else if (lib.folder === 'recent') crumb('Zuletzt geöffnet', 'recent');
-    else {
-      crumb('Bibliothek', null);
-      for (const f of folderPath(lib.folder)) { crumbs.insertAdjacentHTML('beforeend', '<span class="sep">›</span>'); crumb(f.name, f.id); }
+    const home = !lib.search && lib.folder === null && lib.filter === 'all';
+    entry('Startseite', ICON.home, home, () => libGo(null));
+    entry('Zuletzt geöffnet', ICON.clock, lib.folder === 'recent' && !lib.search, () => libGo('recent'));
+    entry('Meine Handschrift', ICON.hand, false, () => $('btnHand').click());
+    nav.insertAdjacentHTML('beforeend', '<div class="side-title">Ordner</div>');
+    for (const f of state.folders.filter((x) => x.parent === null).sort((a, b) => a.name.localeCompare(b.name, 'de', { numeric: true }))) {
+      entry(f.name, `<svg viewBox="0 0 24 24" style="color:${f.color || FOLDER_COLORS[0]}"><path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4.5l2 2H19A1.5 1.5 0 0 1 20.5 9v9A1.5 1.5 0 0 1 19 19.5H5A1.5 1.5 0 0 1 3.5 18z" fill="currentColor" stroke="none"/></svg>`,
+        lib.folder === f.id || folderPath(lib.folder).some((x) => x.id === f.id), () => libGo(f.id));
     }
+
+    // Reiter (nur auf der Startseite) bzw. Pfad
+    const chips = $('libChips'), crumbs = $('libCrumbs');
+    chips.innerHTML = ''; crumbs.innerHTML = '';
+    const atRoot = lib.folder === null && !lib.search;
+    chips.hidden = !atRoot; crumbs.hidden = atRoot;
+    if (atRoot) {
+      for (const [k, label, icon] of [['all', 'Alle', ''], ['fav', 'Favoriten', ICON.star], ['trash', 'Papierkorb', ICON.trash]]) {
+        const c = document.createElement('button');
+        c.className = 'chip' + (lib.filter === k ? ' active' : '');
+        c.innerHTML = icon + '<span></span>';
+        c.querySelector('span').textContent = label;
+        c.onclick = () => libGo(null, k);
+        chips.appendChild(c);
+      }
+    } else {
+      const crumb = (html, key) => {
+        const b = document.createElement('button');
+        b.className = 'crumb';
+        b.innerHTML = html;
+        b.onclick = () => libGo(key);
+        crumbs.appendChild(b);
+      };
+      crumb(ICON.home, null);
+      const sep = () => crumbs.insertAdjacentHTML('beforeend', '<span class="sep"><svg viewBox="0 0 24 24"><path d="M10 7l5 5-5 5"/></svg></span>');
+      if (lib.search) { sep(); crumbs.insertAdjacentHTML('beforeend', '<span class="crumb cur"></span>'); crumbs.lastChild.textContent = `Suche: „${lib.search}“`; }
+      else if (lib.folder === 'recent') { sep(); crumb('Zuletzt geöffnet', 'recent'); }
+      else for (const f of folderPath(lib.folder)) { sep(); crumb('', f.id); crumbs.lastChild.textContent = f.name; }
+    }
+    $('libSort').innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 5v14M7 14l5 5 5-5"/></svg><span></span>';
+    $('libSort').querySelector('span').textContent = SORT_LABEL[lib.sort] || SORT_LABEL.opened;
+    $('library').classList.toggle('as-list', !!lib.list);
+    $('libSelectBtn').classList.toggle('on', !!lib.select);
 
     // Inhalt
     let folders, notes;
     const q = lib.search.trim().toLowerCase();
     if (q) {
       folders = state.folders.filter((f) => f.name.toLowerCase().includes(q));
-      notes = state.notes.filter((n) => n.title.toLowerCase().includes(q));
+      notes = liveNotes().filter((n) => n.title.toLowerCase().includes(q));
     } else if (lib.folder === 'recent') {
       folders = [];
-      notes = [...state.notes].sort((a, b) => (b.opened || 0) - (a.opened || 0)).slice(0, 24);
+      notes = liveNotes().filter((n) => n.opened).sort((a, b) => (b.opened || 0) - (a.opened || 0)).slice(0, 30);
+    } else if (lib.folder === null && lib.filter === 'fav') {
+      folders = []; notes = liveNotes().filter((n) => n.fav);
+    } else if (lib.folder === null && lib.filter === 'trash') {
+      folders = []; notes = state.notes.filter((n) => n.trashed);
     } else {
       folders = state.folders.filter((f) => f.parent === lib.folder);
-      notes = state.notes.filter((n) => n.folder === lib.folder);
+      notes = liveNotes().filter((n) => n.folder === lib.folder);
     }
     folders = [...folders].sort((a, b) => a.name.localeCompare(b.name, 'de', { numeric: true }));
     if (lib.folder !== 'recent' || q) notes = sortNotes(notes);
+    const trashView = lib.folder === null && lib.filter === 'trash' && !q;
 
     const grid = $('libGrid');
     grid.innerHTML = '';
+    const when = (x) => fmtWhen(lib.sort === 'updated' ? x.updated : lib.sort === 'created' ? x.created : (x.opened || x.updated || x.created));
     for (const f of folders) {
-      const count = state.notes.filter((n) => n.folder === f.id).length + state.folders.filter((x) => x.parent === f.id).length;
+      const count = liveNotes().filter((n) => n.folder === f.id).length + state.folders.filter((x) => x.parent === f.id).length;
       const card = document.createElement('div');
       card.className = 'card folder';
       card.style.setProperty('--fc', f.color || FOLDER_COLORS[0]);
-      card.innerHTML = `<div class="cover">${FOLDER_SVG}</div><div class="cap"><span class="name"></span><button class="more" title="Mehr">⋯</button></div><div class="meta">${count} ${count === 1 ? 'Element' : 'Elemente'}</div>`;
+      const last = Math.max(0, ...liveNotes().filter((n) => n.folder === f.id).map((n) => n.opened || n.updated || 0));
+      card.innerHTML = `<div class="head"><div class="when">${fmtWhen(last)}</div><div class="name"></div><button class="more" title="Mehr">•••</button></div>
+        <div class="flap"></div><div class="count">${count} ${count === 1 ? 'Element' : 'Elemente'}</div>`;
       card.querySelector('.name').textContent = f.name;
       card.onclick = (e) => {
-        if (e.target.closest('.more')) return folderMenu(f, e.target);
-        lib.folder = f.id; lib.search = ''; $('libSearch').value = ''; renderLibrary();
+        if (e.target.closest('.more')) return folderMenu(f, e.target.closest('.more'));
+        if (lib.select) return;
+        libGo(f.id);
       };
       grid.appendChild(card);
     }
     for (const n of notes) {
       const card = document.createElement('div');
-      card.className = 'card note';
-      const where = (q || lib.folder === 'recent') && n.folder ? folderPath(n.folder).map((f) => f.name).join(' › ') : '';
-      card.innerHTML = `<div class="cover">${n.thumb ? `<img alt="" src="${n.thumb}">` : '<div class="blank"></div>'}</div>
-        <div class="cap"><span class="name"></span><button class="more" title="Mehr">⋯</button></div>
-        <div class="meta">${where ? '<span class="where"></span> · ' : ''}${new Date(n.updated || n.created).toLocaleDateString('de-DE')} · ${n.pages || 1} S.</div>`;
+      card.className = 'card note' + (lib.select && lib.select.has(n.id) ? ' picked' : '');
+      card.innerHTML = `<div class="head"><div class="when"></div><div class="name"></div><button class="more" title="Mehr">•••</button></div>
+        <div class="cover">${n.thumb ? `<img alt="" loading="lazy" src="${n.thumb}">` : '<div class="blank"></div>'}</div>${n.fav ? '<span class="favmark">★</span>' : ''}${lib.select ? '<span class="tick"></span>' : ''}`;
+      const where = (q || lib.folder === 'recent' || lib.filter !== 'all') && n.folder ? folderPath(n.folder).map((f) => f.name).join(' › ') : '';
+      card.querySelector('.when').textContent = trashView ? 'Gelöscht: ' + fmtWhen(n.trashed) : (where ? where + ' · ' : '') + when(n);
       card.querySelector('.name').textContent = n.title;
-      if (where) card.querySelector('.where').textContent = where;
       card.onclick = (e) => {
-        if (e.target.closest('.more')) return noteMenu(n, e.target);
+        if (lib.select) {
+          lib.select.has(n.id) ? lib.select.delete(n.id) : lib.select.add(n.id);
+          updateSelBar(); renderLibrary(); return;
+        }
+        if (e.target.closest('.more') || trashView) return noteMenu(n, e.target.closest('.more') || card);
         openNote(n.id);
       };
       grid.appendChild(card);
     }
     if (!folders.length && !notes.length) {
-      grid.innerHTML = `<p class="empty">${q ? 'Nichts gefunden.' : 'Noch leer. Lege oben rechts eine Notiz oder einen Ordner an.'}</p>`;
+      grid.innerHTML = `<p class="empty">${q ? 'Nichts gefunden.' : trashView ? 'Der Papierkorb ist leer.' : lib.filter === 'fav' ? 'Noch keine Favoriten. Im Menü ••• einer Notiz: „Zu Favoriten“.' : 'Noch leer. Unten rechts mit + eine Notiz oder einen Ordner anlegen.'}</p>`;
     }
-    $('libNewFolder').hidden = lib.folder === 'recent';
+    $('libFab').hidden = trashView;
+    updateSelBar();
+  }
+
+  function updateSelBar() {
+    const on = !!lib.select;
+    $('libSelBar').hidden = !on;
+    if (on) $('libSelCount').textContent = `${lib.select.size} ausgewählt`;
+  }
+
+  function fabMenu() {
+    popMenu($('libFab'), [
+      ['Neue Notiz', newNote],
+      ['Neuer Ordner', newFolder],
+      ['Importieren (Notewise-Import-Datei)', () => $('libImport').click()],
+    ], 'up');
   }
 
   // kleines Menü an einem Knopf
-  function popMenu(anchor, items) {
+  function popMenu(anchor, items, place) {
     closeMenu();
     const m = document.createElement('div');
     m.id = 'popMenu';
-    for (const [label, fn, cls] of items) {
+    for (const it of items) {
+      if (it === '-') { m.insertAdjacentHTML('beforeend', '<hr>'); continue; }
+      const [label, fn, cls] = it;
       const b = document.createElement('button');
       b.textContent = label;
       if (cls) b.className = cls;
@@ -1287,8 +1397,13 @@
     }
     document.body.appendChild(m);
     const r = anchor.getBoundingClientRect();
-    m.style.left = Math.min(window.innerWidth - m.offsetWidth - 8, r.left) + 'px';
-    m.style.top = Math.min(window.innerHeight - m.offsetHeight - 8, r.bottom + 4) + 'px';
+    if (place === 'up') {
+      m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth)) + 'px';
+      m.style.top = Math.max(8, r.top - m.offsetHeight - 8) + 'px';
+    } else {
+      m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.left)) + 'px';
+      m.style.top = Math.max(8, Math.min(window.innerHeight - m.offsetHeight - 8, r.bottom + 4)) + 'px';
+    }
     setTimeout(() => document.addEventListener('pointerdown', closeMenuOutside, true), 0);
   }
   function closeMenuOutside(e) { if (!e.target.closest('#popMenu')) closeMenu(); }
@@ -1298,9 +1413,31 @@
     if (m) m.remove();
   }
 
+  // endgültig löschen (aus dem Papierkorb)
+  async function purgeNote(n) {
+    state.notes = state.notes.filter((x) => x.id !== n.id);
+    await Store.del('note:' + n.id);
+    for (const b of n.backgrounds || []) await Store.del(`bg:${n.id}:${b.page}`);
+    if (state.noteId === n.id) state.noteId = null;
+  }
+  async function trashNote(n) {
+    n.trashed = Date.now();
+    if (state.noteId === n.id) state.noteId = null;
+  }
+
   function noteMenu(n, anchor) {
+    if (n.trashed) {
+      return popMenu(anchor, [
+        ['Wiederherstellen', async () => { delete n.trashed; if (n.folder && !folderById(n.folder)) n.folder = null; await saveLibrary(); renderLibrary(); }],
+        ['Endgültig löschen', async () => {
+          if (!confirm(`„${n.title}“ endgültig löschen? Das lässt sich nicht rückgängig machen.`)) return;
+          await purgeNote(n); await saveLibrary(); renderLibrary();
+        }, 'danger'],
+      ]);
+    }
     popMenu(anchor, [
       ['Öffnen', () => openNote(n.id)],
+      [n.fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten', async () => { n.fav = !n.fav; await saveLibrary(); renderLibrary(); }],
       ['Umbenennen', async () => {
         const t = prompt('Name der Notiz', n.title);
         if (t && t.trim()) { n.title = t.trim(); await saveLibrary(); renderLibrary(); }
@@ -1314,14 +1451,7 @@
         state.notes.push(copy);
         await saveLibrary(); renderLibrary();
       }],
-      ['Löschen', async () => {
-        if (!confirm(`Notiz „${n.title}“ wirklich löschen? Das lässt sich nicht rückgängig machen.`)) return;
-        state.notes = state.notes.filter((x) => x.id !== n.id);
-        await Store.del('note:' + n.id);
-        for (const b of n.backgrounds || []) await Store.del(`bg:${n.id}:${b.page}`);
-        if (state.noteId === n.id) state.noteId = null;
-        await saveLibrary(); renderLibrary();
-      }, 'danger'],
+      ['In den Papierkorb', async () => { await trashNote(n); await saveLibrary(); renderLibrary(); showStatus(`„${n.title}“ liegt im Papierkorb`, 2500); }, 'danger'],
     ]);
   }
 
@@ -1339,13 +1469,9 @@
       ['Verschieben …', () => pickFolder(`Ordner „${f.name}“ verschieben nach`, f.parent, [f.id, ...descendants(f.id)], async (dest) => { f.parent = dest; await saveLibrary(); renderLibrary(); })],
       ['Löschen', async () => {
         const ids = [f.id, ...descendants(f.id)];
-        const notes = state.notes.filter((n) => ids.includes(n.folder));
-        if (!confirm(`Ordner „${f.name}“ ${notes.length ? `mit ${notes.length} Notiz${notes.length === 1 ? '' : 'en'} ` : ''}wirklich löschen? Das lässt sich nicht rückgängig machen.`)) return;
-        for (const n of notes) {
-          await Store.del('note:' + n.id);
-          for (const b of n.backgrounds || []) await Store.del(`bg:${n.id}:${b.page}`);
-        }
-        state.notes = state.notes.filter((n) => !ids.includes(n.folder));
+        const notes = liveNotes().filter((n) => ids.includes(n.folder));
+        if (!confirm(`Ordner „${f.name}“ löschen?${notes.length ? ` Die ${notes.length} Notiz${notes.length === 1 ? '' : 'en'} darin kommen in den Papierkorb.` : ''}`)) return;
+        for (const n of notes) await trashNote(n);
         state.folders = state.folders.filter((x) => !ids.includes(x.id));
         if (ids.includes(lib.folder)) lib.folder = f.parent;
         await saveLibrary(); renderLibrary();
@@ -1547,6 +1673,7 @@
   function setTool(tool) {
     if (finishText) finishText();
     if (tool !== state.tool && page.sel) page.clearSelection();
+    if (tool !== state.tool) state.penBarOff = false;
     state.tool = tool;
     if (PEN_TOOLS.includes(tool)) state.lastPen = tool;
     document.querySelectorAll('.tool').forEach((x) => x.classList.toggle('active', x.dataset.tool === tool));
@@ -1554,16 +1681,54 @@
     else showStatus('Tippe auf die Stelle, an der der Text stehen soll', 2500);
     syncPenUi();
   }
-  // Farbpunkte und Stärke zeigen den aktuellen Stift
+  // Stiftleiste (wie Notewise): drei Stärken, fünf Farben, eigene Farbe, Einstellungen
+  const PEN_COLORS = {
+    ball: ['#000000', '#D10000', '#0009D1', '#FEC800', '#03D100'],
+    marker: ['#FEC800', '#03D100', '#38B6FF', '#FF6FB5', '#F07B1E'],
+  };
+  const PEN_RANGE = { ball: [0.6, 6], marker: [4, 30] };
+  const penKey = () => (PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen);
   function syncPenUi() {
-    const key = PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen;
+    const key = penKey();
     const p = state.pens[key];
     state.color = p.color; state.width = p.width;
-    document.querySelectorAll('.swatch').forEach((x) => x.classList.toggle('active', x.dataset.color.toUpperCase() === p.color.toUpperCase()));
-    const sel = $('penWidth');
-    sel.innerHTML = PEN_WIDTHS[key].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
-    sel.value = String(p.width);
-    if (sel.value !== String(p.width)) sel.value = PEN_WIDTHS[key][1][0];
+    const bar = $('penBar');
+    bar.hidden = !PEN_TOOLS.includes(state.tool) || !!state.penBarOff;
+    // Stärken: drei Vorgaben; eine eigene (aus den Einstellungen) ersetzt die nächstgelegene
+    const ws = PEN_WIDTHS[key].map(([v]) => +v);
+    if (!ws.includes(p.width)) ws[ws.reduce((bi, w, i) => (Math.abs(w - p.width) < Math.abs(ws[bi] - p.width) ? i : bi), 0)] = p.width;
+    $('pbWidths').innerHTML = ws.map((w, i) => `<button class="pb w${p.width === w ? ' on' : ''}" data-w="${w}" title="Stärke ${w}">
+      <svg viewBox="0 0 30 24"><path d="M4 12h22" style="stroke-width:${[1.6, 3, 6][i]}"/></svg></button>`).join('');
+    $('pbWidths').querySelectorAll('[data-w]').forEach((b) => { b.onclick = () => { state.pens[key].width = +b.dataset.w; savePens(); syncPenUi(); }; });
+    const cols = [...PEN_COLORS[key]];
+    if (!cols.some((c) => c.toUpperCase() === p.color.toUpperCase())) cols.push(p.color);
+    $('pbColors').innerHTML = cols.map((c) => `<button class="pc${c.toUpperCase() === p.color.toUpperCase() ? ' on' : ''}" data-c="${c}" style="--c:${c}"></button>`).join('');
+    $('pbColors').querySelectorAll('[data-c]').forEach((b) => { b.onclick = () => { state.pens[key].color = b.dataset.c; savePens(); syncPenUi(); }; });
+    $('pbCustom').value = /^#[0-9a-f]{6}$/i.test(p.color) ? p.color.toLowerCase() : '#000000';
+    // Einstellungen
+    const [lo, hi] = PEN_RANGE[key];
+    const r = $('penWidth');
+    r.min = lo; r.max = hi; r.value = p.width;
+    $('penWidthVal').textContent = p.width.toFixed(1);
+    $('penHold').checked = state.settings.holdShape !== false;
+    $('penFinger').checked = !!state.settings.finger;
+    if (!$('penSet').hidden) drawPenPreview();
+    placePenBar();
+  }
+  function placePenBar() {
+    const bar = $('penBar');
+    if (bar.hidden) return;
+    const btn = document.querySelector(`.tool[data-tool="${penKey()}"]`);
+    const r = btn ? btn.getBoundingClientRect() : { left: 200, bottom: 60 };
+    bar.style.left = Math.max(8, Math.min(window.innerWidth - bar.offsetWidth - 8, r.left - 28)) + 'px';
+    bar.style.top = r.bottom + 12 + 'px';
+  }
+  function drawPenPreview() {
+    const cv = $('penPreview'), c = cv.getContext('2d');
+    c.clearRect(0, 0, cv.width, cv.height);
+    const p = state.pens[penKey()];
+    const pts = Array.from({ length: 60 }, (_, i) => { const t = i / 59; return [40 + t * 480, 60 - Math.sin(t * Math.PI * 2) * 30, 0.6]; });
+    Ink.drawStroke(c, { pts, color: p.color, width: p.width * 2, alpha: penKey() === 'marker' ? 0.38 : 0 }, 1);
   }
   function savePens() { Store.set('pens', { pens: state.pens, lastPen: state.lastPen }); }
 
@@ -1921,16 +2086,21 @@
 
 
   // ---------------- Leiste wie Notewise: Seiten, Suche, Modi, Haftnotiz, Tabelle, Lineal, Aufnahme ----------------
-  function penPopup(btn) {
-    const m = $('penPop');
-    if (!m.hidden) { m.hidden = true; return; }
+  // zweites Tippen auf Stift/Textmarker: Stiftleiste ein-/ausblenden
+  function penPopup() {
+    state.penBarOff = !state.penBarOff;
     syncPenUi();
+  }
+  // kleines dunkles Fenster an einem Knopf (Stift-Einstellungen u. Ä.)
+  function openPop(id, anchor) {
+    const m = $(id);
+    if (!m.hidden) { m.hidden = true; return; }
     m.hidden = false;
-    const r = btn.getBoundingClientRect();
-    m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.left - 40)) + 'px';
+    const r = anchor.getBoundingClientRect();
+    m.style.left = Math.max(8, Math.min(window.innerWidth - m.offsetWidth - 8, r.right - m.offsetWidth / 2)) + 'px';
     m.style.top = r.bottom + 10 + 'px';
     setTimeout(() => document.addEventListener('pointerdown', function close(e) {
-      if (e.target.closest('#penPop')) return;
+      if (e.target.closest('#' + id) || e.target.closest('[data-pop-anchor]') === anchor) return;
       m.hidden = true; document.removeEventListener('pointerdown', close, true);
     }, true), 0);
   }
@@ -2476,7 +2646,7 @@
     $('gridClose').onclick = () => { $('gridModal').hidden = true; };
     $('btnAddPage').onclick = addPage;
     $('btnSearch').onclick = () => { showLibrary(); setTimeout(() => $('libSearch').focus(), 50); };
-    $('btnRecent').onclick = () => popMenu($('btnRecent'), [...state.notes].filter((n) => n.id !== state.noteId)
+    $('btnRecent').onclick = () => popMenu($('btnRecent'), liveNotes().filter((n) => n.id !== state.noteId)
       .sort((a, b) => (b.opened || 0) - (a.opened || 0)).slice(0, 8).map((n) => [n.title, () => openNote(n.id)]));
     $('btnFinger').classList.toggle('active', !!state.settings.finger);
     $('btnFinger').onclick = () => {
@@ -2493,21 +2663,27 @@
     $('btnCollapse').onclick = () => $('pillTools').classList.toggle('collapsed');
     $('btnMore').onclick = () => moreMenu($('btnMore'));
     $('btnRuler').onclick = toggleRuler;
+    $('pagePillPg').onclick = gotoPagePrompt;
+    $('zoomNo').onclick = () => { const r = page.canvas.getBoundingClientRect(); page.zoomAt(1, r.left + r.width / 2, r.top + r.height / 2); };
     $('btnMic').onclick = toggleMic;
     $('pagePrev').onclick = () => goToPage(Math.max(0, pageOf(page.scrollY + 5) - (page.scrollY % PAGE_H < 5 ? 1 : 0)));
     $('pageNext').onclick = () => goToPage(Math.min(pageCount() - 1, pageOf(page.scrollY + 5) + 1));
-    document.querySelectorAll('.swatch').forEach((b) => {
-      b.addEventListener('click', () => {
-        const key = PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen;
-        state.pens[key].color = b.dataset.color;
-        savePens(); syncPenUi();
-      });
-    });
-    $('penWidth').onchange = () => {
-      const key = PEN_TOOLS.includes(state.tool) ? state.tool : state.lastPen;
-      state.pens[key].width = +$('penWidth').value;
+    $('pbCustom').onchange = () => { state.pens[penKey()].color = $('pbCustom').value.toUpperCase(); savePens(); syncPenUi(); };
+    $('pbSettings').dataset.popAnchor = '1';
+    $('pbSettings').onclick = () => { openPop('penSet', $('pbSettings')); drawPenPreview(); };
+    $('pbLine').onclick = () => showStatus('Gerade Linie: am Ende des Strichs den Stift kurz stillhalten', 2500);
+    const setW = (w) => {
+      const [lo, hi] = PEN_RANGE[penKey()];
+      state.pens[penKey()].width = Math.round(Math.min(hi, Math.max(lo, w)) * 10) / 10;
       savePens(); syncPenUi();
     };
+    $('penWidth').oninput = () => setW(+$('penWidth').value);
+    $('penMinus').onclick = () => setW(state.pens[penKey()].width - (penKey() === 'marker' ? 1 : 0.1));
+    $('penPlus').onclick = () => setW(state.pens[penKey()].width + (penKey() === 'marker' ? 1 : 0.1));
+    $('penHold').onchange = () => { state.settings.holdShape = $('penHold').checked; saveSettings(); };
+    $('penFinger').onchange = () => { $('btnFinger').click(); };
+    document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => { b.closest('.dpop, .modal').hidden = true; }; });
+    window.addEventListener('resize', placePenBar);
     document.querySelectorAll('#selMenu [data-act]').forEach((b) => { b.onclick = () => selAction(b.dataset.act, b.dataset.color); });
     setTool('ball');
 
@@ -2561,8 +2737,40 @@
     $('libNewFolder').onclick = newFolder;
     $('libSettings').onclick = () => $('btnSettings').click();
     $('libSearch').oninput = () => { lib.search = $('libSearch').value; renderLibrary(); };
-    $('libSort').value = lib.sort;
-    $('libSort').onchange = () => { lib.sort = $('libSort').value; Store.set('libView', { sort: lib.sort }); renderLibrary(); };
+    $('libSearchBtn').onclick = () => {
+      const s = $('libSearch');
+      if (s.hidden) { s.hidden = false; s.focus(); }
+      else { s.hidden = true; s.value = ''; lib.search = ''; renderLibrary(); }
+    };
+    $('libSort').onclick = () => popMenu($('libSort'), Object.entries(SORT_LABEL).map(([k, l]) => [(lib.sort === k ? '✓ ' : '') + l, () => {
+      lib.sort = k; Store.set('libView', { sort: lib.sort, list: lib.list }); renderLibrary();
+    }]));
+    $('libViewBtn').onclick = () => { lib.list = !lib.list; Store.set('libView', { sort: lib.sort, list: lib.list }); renderLibrary(); };
+    $('libSelectBtn').onclick = () => { lib.select = lib.select ? null : new Set(); renderLibrary(); };
+    $('libSelCancel').onclick = () => { lib.select = null; renderLibrary(); };
+    const picked = () => state.notes.filter((n) => lib.select && lib.select.has(n.id));
+    $('libSelDel').onclick = async () => {
+      const ns = picked(); if (!ns.length) return;
+      if (ns.every((n) => n.trashed)) {
+        if (!confirm(`${ns.length} Notiz${ns.length === 1 ? '' : 'en'} endgültig löschen? Das lässt sich nicht rückgängig machen.`)) return;
+        for (const n of ns) await purgeNote(n);
+      } else for (const n of ns) await trashNote(n);
+      lib.select = null; await saveLibrary(); renderLibrary();
+    };
+    $('libSelFav').onclick = async () => {
+      const ns = picked(); const to = !ns.every((n) => n.fav);
+      ns.forEach((n) => { n.fav = to; }); lib.select = null; await saveLibrary(); renderLibrary();
+    };
+    $('libSelMove').onclick = () => {
+      const ns = picked(); if (!ns.length) return;
+      pickFolder(`${ns.length} Notiz${ns.length === 1 ? '' : 'en'} verschieben nach`, null, [], async (dest) => {
+        ns.forEach((n) => { n.folder = dest; delete n.trashed; }); lib.select = null; await saveLibrary(); renderLibrary();
+      });
+    };
+    $('libFab').onclick = fabMenu;
+    const toggleSide = () => { $('library').classList.toggle('side-off'); };
+    $('libSideToggle').onclick = toggleSide;
+    $('libSideOpen').onclick = toggleSide;
     $('pickClose').onclick = () => { $('pickModal').hidden = true; };
     $('btnExport').onclick = () => { $('exportModal').hidden = false; };
     $('exportClose').onclick = () => { $('exportModal').hidden = true; };
@@ -2600,6 +2808,7 @@
       $('setLine').disabled = nwGrid();
       $('setFinger').checked = state.settings.finger;
       $('setCheck').checked = state.settings.check;
+      $('setName').value = state.settings.userName || '';
       Store.get('claudeKey').then((k) => { $('setClaudeKey').placeholder = k ? 'gespeichert (zum Ändern neu eingeben)' : 'sk-ant-…'; });
       fillStyleSelect();
       updateModelInfo();
@@ -2616,6 +2825,7 @@
     };
     $('setLine').onchange = () => { state.settings.lineSpacing = +$('setLine').value; saveSettings(); };
     $('setFinger').onchange = () => { state.settings.finger = $('setFinger').checked; saveSettings(); };
+    $('setName').onchange = () => { state.settings.userName = $('setName').value.trim(); saveSettings(); if (!$('library').hidden) renderLibrary(); };
     $('setCheck').onchange = async () => {
       state.settings.check = $('setCheck').checked;
       saveSettings();
