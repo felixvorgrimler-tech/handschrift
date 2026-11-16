@@ -90,6 +90,7 @@
     <button id="btnCollapse" class="tb" title="Stiftleiste ein-/ausblenden"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
   </div>
   <div class="pill" id="pillRight">
+    <button id="btnClaudeTop" class="tb" title="Claude fragen"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4M8.5 3.9l7 16.2M15.5 3.9l-7 16.2M3.9 8.5l16.2 7M3.9 15.5l16.2-7"/></svg></button>
     <button id="btnRead" class="tb toggle" title="Lesemodus (nur ansehen)"><svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
     <button id="btnMore" class="tb" title="Mehr"><svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.3" class="dot"/><circle cx="12" cy="12" r="1.3" class="dot"/><circle cx="18" cy="12" r="1.3" class="dot"/></svg></button>
   </div>
@@ -185,6 +186,10 @@
 <div id="tplModal" class="dmodal" hidden>
   <div class="dbox">
     <div class="dhead center"><b>Vorlage</b><button class="x" data-close>✕</button></div>
+    <div class="dlabel">Format (gilt für die ganze Notiz)</div>
+    <div class="drow tpl-size"><div id="tplSizes" class="chips"></div>
+      <div id="tplOrient" class="seg small"><button data-o="hoch">Hoch</button><button data-o="quer">Quer</button></div></div>
+    <div class="dlabel">Papier</div>
     <div id="tplColors" class="tpl-colors"></div>
     <div class="drow"><span class="dl">Dichte</span><input id="tplDensity" type="range" min="1" max="10" step="1"><span id="tplDensityV" class="val"></span></div>
     <div class="drow"><span class="dl">Linienbreite</span><input id="tplLineW" type="range" min="1" max="10" step="1"><span id="tplLineWV" class="val"></span></div>
@@ -203,7 +208,8 @@
       <label class="radio"><input type="radio" name="finger" value="scroll"> Scrollen</label></div>
     <div class="dgroup"><div class="dgt">Zwei Finger</div><p class="dhint">Zoomen und Verschieben</p></div>
     <div class="dgroup"><div class="dgt">Stift</div>
-      <label class="drow sw">Halten, um Form zu zeichnen <input id="stHold" type="checkbox"><span class="tg"></span></label></div>
+      <label class="drow sw">Halten, um Form zu zeichnen <input id="stHold" type="checkbox"><span class="tg"></span></label>
+      <label class="drow sw">Durchkritzeln radiert <input id="stScribble" type="checkbox"><span class="tg"></span></label></div>
     <div class="dgroup"><div class="dgt">Stiftknöpfe</div>
       <p class="dhint">Knopf drücken, während der Stift über dem Bildschirm schwebt: wechselt zwischen Stift und Radierer.
         Knopf gedrückt halten beim Schreiben: radiert, solange er gedrückt ist.</p>
@@ -241,12 +247,12 @@
 
 <!-- Claude fragen -->
 <aside id="claudePanel" hidden>
-  <div class="side-head"><b>✦ Claude fragen</b><span><button id="claudeNew" class="btn" title="Neues Gespräch">Neu</button>
+  <div class="side-head"><b>Claude</b><span><button id="claudeNew" class="btn" title="Neues Gespräch">Neu</button>
     <button id="claudeClose" class="btn">✕</button></span></div>
   <div id="claudeMsgs"></div>
   <div class="claude-in">
     <label class="check small"><input id="claudeWithPage" type="checkbox" checked> aktuelle Seite als Bild mitschicken</label>
-    <textarea id="claudeInput" rows="3" placeholder="Frag etwas zu deiner Seite, z. B. „Fasse die Seite zusammen“ oder „Erklär mir Aufgabe 2“"></textarea>
+    <textarea id="claudeInput" rows="2" placeholder="Frag etwas zu deiner Seite …"></textarea>
     <button id="claudeSend" class="btn primary">Fragen</button>
   </div>
 </aside>

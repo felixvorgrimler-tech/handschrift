@@ -308,7 +308,7 @@ html, body { background: #181818; }
 .dpop { position: fixed; z-index: 46; width: 320px; background: #232528; color: #e9ebef; border-radius: 18px; padding: 14px 16px 16px; box-shadow: 0 12px 34px rgba(0,0,0,.5); }
 .dpop-head { display: flex; align-items: center; justify-content: center; position: relative; margin-bottom: 8px; }
 .dpop-head b { font-weight: 500; font-size: 16px; }
-.dpop .x, .modal .x { position: absolute; right: 0; top: -4px; width: 32px; height: 32px; border-radius: 50%; border: none; background: #33363b; color: #ccc; cursor: pointer; }
+.dpop .x, .modal .x, .dmodal .x { position: absolute; right: 0; top: -4px; width: 32px; height: 32px; border-radius: 50%; border: none; background: #33363b; color: #ccc; cursor: pointer; }
 #penPreview { width: 100%; height: 60px; background: #1a1b1e; border-radius: 12px; display: block; margin-bottom: 10px; }
 .drow { display: flex; align-items: center; gap: 10px; margin: 10px 0; font-size: 14px; color: #d2d5da; }
 .drow input[type=range] { flex: 1; accent-color: #4ea3ff; }
@@ -369,7 +369,7 @@ body.with-pages #pagePill { left: auto; }
 .gthumb { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .gthumb .gimg { position: relative; cursor: pointer; line-height: 0; border-radius: 6px; border: 2px solid transparent; }
 .gthumb .gimg { width: 100%; }
-.gthumb .gimg canvas { width: 100% !important; height: auto !important; aspect-ratio: 1000 / 1414; border-radius: 4px; background: #fff; }
+.gthumb .gimg canvas { width: 100% !important; height: auto !important; aspect-ratio: var(--page-ratio, 1000 / 1414); border-radius: 4px; background: #fff; }
 .gthumb.active .gimg { border-color: #3d8bff; }
 .gthumb .tick { bottom: 8px; }
 .gthumb.picked .gimg { border-color: #3d8bff; }
@@ -453,3 +453,35 @@ button:focus:not(:focus-visible) { outline: none; }
 #tbHand { position: fixed; z-index: 30; border: none; border-radius: 16px; padding: 6px 12px; font-size: 13px; background: #1f4f7d; color: #e6f2ff;
   box-shadow: 0 4px 14px rgba(0,0,0,.35); cursor: pointer; }
 #selMenu button.accent { color: #2f6fe0; font-weight: 600; }
+
+.dmodal .x { font-size: 15px; line-height: 32px; padding: 0; z-index: 2; }
+.dmodal .x:hover { background: #44474d; color: #fff; }
+
+/* Vorlage: Seitenformat */
+.tpl-size { flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+.tpl-size .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.tpl-size .chips button, .seg.small button { border: 1px solid #3c3e43; background: none; color: #cfd2d8; font: inherit; font-size: 13px; padding: 6px 11px; border-radius: 14px; cursor: pointer; }
+.tpl-size .chips button.on, .seg.small button.on { background: #1f4f7d; border-color: #1f4f7d; color: #e6f2ff; }
+.seg.small { display: flex; gap: 4px; background: none; padding: 0; }
+
+/* Claude: Knopf in der Leiste, kleine dunkle Karte statt breiter weißer Seitenleiste */
+#toolbar #btnClaudeTop { color: #d97757; }
+#toolbar #btnClaudeTop svg { stroke-width: 1.5; }
+#toolbar #btnClaudeTop.active { background: rgba(217,119,87,.18); color: #e8906f; }
+#claudePanel { top: 64px; right: 10px; bottom: auto; padding-top: 0; width: min(320px, 92vw); max-height: min(520px, calc(100vh - 150px));
+  background: rgba(30, 31, 34, .97); color: #e4e6ea; border: 1px solid #3c3e43; border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.45); overflow: hidden; z-index: 12; }
+body.with-claude #stage { right: 0; }
+#claudePanel .side-head { padding: 8px 10px 8px 14px; border-bottom: 1px solid rgba(255,255,255,.08); }
+#claudePanel .side-head b { font-weight: 500; font-size: 14px; color: #cfd2d8; }
+#claudePanel .side-head .btn { background: none; border: none; color: #aeb2ba; padding: 4px 8px; font-size: 13px; }
+#claudeMsgs { padding: 10px; gap: 8px; min-height: 40px; }
+#claudeMsgs:empty { display: none; }
+#claudePanel .cmsg { font-size: 13.5px; padding: 7px 10px; }
+#claudePanel .cmsg.user { background: #1f4f7d; }
+#claudePanel .cmsg.assistant { background: #2b2d31; color: #e4e6ea; }
+#claudePanel .cmsg.info { background: #3a3122; color: #e7c58a; }
+#claudePanel .claude-in { padding: 8px 10px 10px; border-top: none; background: none; display: flex; flex-direction: column; gap: 6px; }
+#claudePanel .claude-in label { color: #9a9ea6; font-size: 12px; }
+#claudePanel textarea { background: #1a1b1e; color: #e9ebef; border: 1px solid #3c3e43; border-radius: 12px; padding: 8px 10px; font-size: 14px; resize: none; }
+#claudePanel textarea::placeholder { color: #777b83; }
+#claudePanel #claudeSend { align-self: flex-end; background: #1f4f7d; color: #e6f2ff; border: none; border-radius: 14px; padding: 6px 14px; }

@@ -7,7 +7,19 @@
   const LEFT = 70;            // Rand links (Text-Einfügen)
   const RIGHT = 965;          // Rand rechts
   // Seiten im A4-Format wie in Notewise (3508 × 4960): eine App-Seite wird genau eine Notewise-Seite
-  const PAGE_H = Math.round(PAGE_W * 4960 / 3508);   // 1414
+  let PAGE_H = Math.round(PAGE_W * 4960 / 3508);   // 1414 (A4 hoch); je Notiz anders, siehe setPageSize
+  let PAGE_MM = 210;          // echte Seitenbreite in mm (für Rastergröße und PDF-Export)
+  const PAGE_SIZES = { A5: [148, 210], A4: [210, 297], A3: [297, 420], Letter: [215.9, 279.4], Legal: [215.9, 355.6], Quadrat: [210, 210] };
+  function sizeDims(z) {
+    const d = PAGE_SIZES[(z && z.name) || 'A4'] || PAGE_SIZES.A4;
+    return z && z.landscape ? [d[1], d[0]] : d;
+  }
+  const sizeHeight = (z) => { const [w, hh] = sizeDims(z); return (!z || (z.name || 'A4') === 'A4') && !(z && z.landscape) ? 1414 : Math.round(PAGE_W * hh / w); };
+  function setPageSize(z) {
+    PAGE_H = sizeHeight(z);
+    PAGE_MM = sizeDims(z)[0];
+    document.documentElement.style.setProperty('--page-ratio', `${PAGE_W} / ${PAGE_H}`);
+  }
   const BOTTOM = 60;          // unterer Rand: keine Linie tiefer als PAGE_H − BOTTOM
   const pageOf = (y) => Math.max(0, Math.floor(y / PAGE_H));
   // Notewise-Karo („Alphabet Handwritten Grid“): Kästchen 120 Notewise-Einheiten, erste Linie bei 84
@@ -34,7 +46,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-16d';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-16e';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -1038,6 +1050,17 @@
         this.live = null;
         if (s.straight) { s.sharp = true; delete s.straight; }
         if (s.shaped) { s.sharp = true; delete s.shaped; }
+        // Durchkritzeln (Zickzack über Geschriebenem) radiert die getroffenen Striche, wie in GoodNotes/Notewise
+        if (!cancel && !s.sharp && !s.alpha && !this.opts.fixedHeight && this.settings.scribbleErase !== false) {
+          const hit = scribbleHits(s, this.strokes);
+          if (hit.length) {
+            this.strokes = this.strokes.filter((q) => !hit.includes(q));
+            for (const q of hit) this.dropTiles(q.bounds);
+            this.opts.onErase(hit, []);
+            this.render(true);
+            return;
+          }
+        }
         if (!cancel) {
           s.bounds = Ink.strokeBounds(s);
           this.strokes.push(s);
@@ -1107,6 +1130,43 @@
       n.bounds = Ink.strokeBounds(n);
       return n;
     });
+  }
+
+  // ---- Durchkritzeln: Zickzack mit mehreren Richtungswechseln, das über vorhandenen Strichen liegt ----
+  function scribbleHits(s, strokes) {
+    const pts = s.pts;
+    if (pts.length < 12) return [];
+    const b = Ink.strokeBounds(s), w = b.x1 - b.x0, hh = b.y1 - b.y0;
+    const ax = w >= hh ? 0 : 1, span = Math.max(w, hh);
+    if (span < 12) return [];
+    // Richtungswechsel entlang der längeren Achse zählen (kleines Zittern zählt nicht)
+    let L = 0, turns = 0, dir = 0, ext = pts[0][ax];
+    const minRun = Math.max(4, span * 0.18);
+    for (let i = 1; i < pts.length; i++) {
+      L += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      const v = pts[i][ax];
+      if (dir >= 0 && v > ext) ext = v;
+      else if (dir <= 0 && v < ext) ext = v;
+      if (dir === 0) { if (Math.abs(v - pts[0][ax]) > minRun) { dir = v > pts[0][ax] ? 1 : -1; ext = v; } }
+      else if ((dir > 0 && ext - v > minRun) || (dir < 0 && v - ext > minRun)) { turns++; dir = -dir; ext = v; }
+    }
+    if (turns < 4 || L < 3.5 * span) return [];
+    // getroffen: Strich liegt großteils im Kritzelbereich oder wird vom Kritzel mehrfach gekreuzt
+    const pad = 3, hit = [];
+    const step = Math.max(1, Math.floor(pts.length / 80));
+    for (const q of strokes) {
+      if (q.type || q.tape) continue;
+      const qb = q.bounds || (q.bounds = Ink.strokeBounds(q));
+      if (qb.x1 < b.x0 - pad || qb.x0 > b.x1 + pad || qb.y1 < b.y0 - pad || qb.y0 > b.y1 + pad) continue;
+      let inside = 0;
+      for (const p of q.pts) if (p[0] >= b.x0 - pad && p[0] <= b.x1 + pad && p[1] >= b.y0 - pad && p[1] <= b.y1 + pad) inside++;
+      if (inside >= q.pts.length * 0.5) { hit.push(q); continue; }
+      let near = 0;
+      const r = Math.max(2.5, (q.width || 2) * 0.8);
+      for (let i = 0; i < pts.length && near < 3; i += step) if (strokeNear(q, pts[i], r)) near++;
+      if (near >= 3) hit.push(q);
+    }
+    return hit;
   }
 
   // ---- Formerkennung beim Halten ----
@@ -1273,6 +1333,7 @@
     if (state.noteId) await saveNow();
     state.noteId = id;
     const n = noteById(id);
+    setPageSize(n.size);
     const data = (await Store.get('note:' + id)) || { strokes: [] };
     page.strokes = data.strokes.map((s) => ({ ...s, bounds: Ink.strokeBounds(s) }));
     clearBackgrounds();
@@ -2374,8 +2435,7 @@
   function toggleClaude(show) {
     const on = show ?? $('claudePanel').hidden;
     $('claudePanel').hidden = !on;
-    document.body.classList.toggle('with-claude', on);
-    page.resize();
+    $('btnClaudeTop').classList.toggle('active', on);
     if (on) setTimeout(() => $('claudeInput').focus(), 0);
   }
 
@@ -2588,10 +2648,28 @@
   const TPL_KINDS = [['plain', 'Blanko'], ['lined', 'Liniert'], ['grid', 'Kariert'], ['dots', 'Punktiert']];
   const defaultTpl = () => ({ kind: { plain: 'plain', lined: 'lined', grid: 'grid', nwgrid: 'grid' }[state.settings.paper] || 'grid', color: '#FFFFFF', density: 5, lineW: 5 });
   const tplOf = (n, p) => (n && ((n.templates && n.templates[p]) || n.template)) || null;
-  let tplEdit = null;
+  let tplEdit = null, tplSize = { name: 'A4', landscape: false };
+  // Format der ganzen Notiz ändern: Inhalte bleiben auf ihrer Seite an derselben Stelle (von oben gemessen)
+  async function changePageSize(z) {
+    const n = currentNote(), oldH = PAGE_H, newH = sizeHeight(z);
+    n.size = { name: z.name, landscape: !!z.landscape };
+    setPageSize(n.size);
+    if (newH !== oldH) {
+      for (const st of page.strokes) {
+        const b = st.bounds || Ink.strokeBounds(st);
+        const dy = Math.max(0, Math.floor(b.y0 / oldH)) * (newH - oldH);
+        if (dy) for (const q of st.pts) q[1] += dy;
+        st.bounds = Ink.strokeBounds(st);
+      }
+      state.undo = []; state.redo = [];
+    }
+    page.scrollY = Math.min(page.scrollY / oldH * newH, page.maxScroll());
+    page.resize();
+  }
   function openTemplate() {
     const n = currentNote();
     tplEdit = { ...(tplOf(n, curPage()) || defaultTpl()) };
+    tplSize = { name: (n.size && n.size.name) || 'A4', landscape: !!(n.size && n.size.landscape) };
     renderTemplate();
     $('tplModal').hidden = false;
   }
@@ -2599,6 +2677,12 @@
     const t = tplEdit;
     $('tplColors').innerHTML = TPL_COLORS.map((c) => `<button class="tc${c === t.color ? ' on' : ''}" data-c="${c}" style="--c:${c}"></button>`).join('');
     $('tplColors').querySelectorAll('[data-c]').forEach((b) => { b.onclick = () => { t.color = b.dataset.c; renderTemplate(); }; });
+    $('tplSizes').innerHTML = Object.keys(PAGE_SIZES).map((k) => `<button class="${tplSize.name === k ? 'on' : ''}" data-z="${k}">${k}</button>`).join('');
+    $('tplSizes').querySelectorAll('[data-z]').forEach((b) => { b.onclick = () => { tplSize.name = b.dataset.z; renderTemplate(); }; });
+    $('tplOrient').querySelectorAll('[data-o]').forEach((b) => {
+      b.classList.toggle('on', (b.dataset.o === 'quer') === tplSize.landscape);
+      b.onclick = () => { tplSize.landscape = b.dataset.o === 'quer'; renderTemplate(); };
+    });
     $('tplDensity').value = t.density; $('tplDensityV').textContent = t.density;
     $('tplLineW').value = t.lineW; $('tplLineWV').textContent = t.lineW;
     const box = $('tplKinds');
@@ -2618,6 +2702,8 @@
     if (all) { n.template = { ...tplEdit }; delete n.templates; }
     else { n.templates = n.templates || {}; n.templates[curPage()] = { ...tplEdit }; }
     $('tplModal').hidden = true;
+    const cur = n.size || { name: 'A4', landscape: false };
+    if (cur.name !== tplSize.name || !!cur.landscape !== tplSize.landscape) await changePageSize(tplSize);
     await saveLibrary();
     await saveNow();
     page.render();
@@ -2630,7 +2716,7 @@
     ctx.beginPath(); ctx.rect(x0, Math.max(0, y0), w, Math.min(hPx, y1) - Math.max(0, y0)); ctx.clip();
     ctx.fillStyle = t.color; ctx.fillRect(x0, y0, w, PAGE_H * s);
     const dark = ['#3A3B3E', '#111214'].includes(t.color);
-    const step = GRID * Math.pow(1.17, 5 - t.density);
+    const step = GRID * Math.pow(1.17, 5 - t.density) * 210 / PAGE_MM;
     const lw = Math.max(0.6, s * (0.35 + t.lineW * 0.16));
     ctx.strokeStyle = dark ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.16)';
     ctx.fillStyle = ctx.strokeStyle;
@@ -2660,6 +2746,7 @@
     document.querySelectorAll('#stylusModal input[name=finger]').forEach((r) => { r.checked = r.value === (state.settings.finger ? 'draw' : 'scroll'); });
     $('stHold').checked = state.settings.holdShape !== false;
     $('stPenBtn').checked = state.settings.penBtnSwitch !== false;
+    $('stScribble').checked = state.settings.scribbleErase !== false;
     $('stLearnInfo').textContent = (state.settings.penKeys || []).length ? 'Angelernt: ' + state.settings.penKeys.map((k) => k.replace('key:', '')).join(', ') : '';
     $('stylusModal').hidden = false;
   }
@@ -3197,7 +3284,7 @@
     obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
     obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${N} >>`);
     pages.forEach((p, k) => {
-      const id = 3 + k * 3, W = 595.28, H = 841.89;
+      const id = 3 + k * 3, W = +(PAGE_MM / 25.4 * 72).toFixed(2), H = +(W * PAGE_H / PAGE_W).toFixed(2);
       const content = enc.encode(`q ${W} 0 0 ${H} 0 0 cm /Im0 Do Q`);
       obj(id, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /XObject << /Im0 ${id + 2} 0 R >> >> /Contents ${id + 1} 0 R >>`);
       obj(id + 1, `<< /Length ${content.length} >>`, content);
@@ -3359,6 +3446,8 @@
     $('stHold').onchange = () => { state.settings.holdShape = $('stHold').checked; saveSettings(); };
     $('stPenBtn').onchange = () => { state.settings.penBtnSwitch = $('stPenBtn').checked; saveSettings(); };
     $('stLearn').onclick = startLearnPenBtn;
+    $('stScribble').onchange = () => { state.settings.scribbleErase = $('stScribble').checked; saveSettings(); };
+    $('btnClaudeTop').onclick = () => toggleClaude();
     $('btnFinger').classList.toggle('active', !!state.settings.finger);
     $('btnFinger').onclick = () => {
       state.settings.finger = !state.settings.finger;
@@ -3399,7 +3488,9 @@
     $('penPlus').onclick = () => setW(state.pens[penKey()].width + (penKey() === 'marker' ? 1 : 0.1));
     $('penHold').onchange = () => { state.settings.holdShape = $('penHold').checked; saveSettings(); };
     $('penFinger').onchange = () => { $('btnFinger').click(); };
-    document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => { b.closest('.dpop, .modal').hidden = true; }; });
+    document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => { b.closest('.dpop, .modal, .dmodal').hidden = true; }; });
+    // dunkle Fenster: Tippen neben das Fenster schließt es ebenfalls (wie in Notewise)
+    document.querySelectorAll('.dmodal').forEach((m) => m.addEventListener('click', (e) => { if (e.target === m) m.hidden = true; }));
     window.addEventListener('resize', placePenBar);
     document.querySelectorAll('#selMenu [data-act]').forEach((b) => { b.onclick = () => selAction(b.dataset.act, b.dataset.color); });
     setTool('ball');
