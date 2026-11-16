@@ -1,0 +1,13 @@
+{
+  "name": "ZOCK – Spielgeld-Casino",
+  "short_name": "ZOCK",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f212e",
+  "theme_color": "#0f212e",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
