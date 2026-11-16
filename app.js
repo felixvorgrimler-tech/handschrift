@@ -34,7 +34,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-16a';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-16b';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -423,6 +423,12 @@
         single: this.opts.singleLine, scrollX: this.scrollX, noBreaks: !!this.opts.pages,
       });
       const top = this.scrollY, bottom = this.scrollY + Hh / s;
+      if (this.opts.template) {   // Vorlage je Seite (Blanko, Liniert, Kariert, Punktiert, Papierfarbe)
+        for (let p = pageOf(top); p * PAGE_H < bottom; p++) {
+          const t = this.opts.template(p);
+          if (t) drawTemplate(b, s, this.scrollX, (p * PAGE_H - this.scrollY) * s, Hh, t, p);
+        }
+      }
       b.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
       if (this.opts.background) {
         for (let p = pageOf(top); p * PAGE_H < bottom; p++) {
@@ -1096,14 +1102,29 @@
   const pageCount = () => { const n = currentNote(); return n ? Math.max(n.pages || 1, pageOf(page.contentBottom()) + 1) : 1; };
 
   // Seite i (ab 0) als kleines Bild: Papier und die Striche, die auf dieser Seite liegen
-  function drawPageThumb(cv, strokes, i, w) {
+  // Vorschau mit Hintergrund, ohne große Bilder im Speicher zu halten (Seitenübersicht)
+  async function smallThumb(cv, i, w) {
+    const n = currentNote();
+    const b = n && (n.backgrounds || []).find((x) => x.page === i);
+    let img = null;
+    if (b && !pageBackground(i, false)) {
+      const blob = await Store.get(`bg:${n.id}:${i}`);
+      if (blob) img = await createImageBitmap(blob, { resizeWidth: Math.max(1, Math.round(w * (window.devicePixelRatio || 1) * b.rect[2] / PAGE_W)), resizeQuality: 'medium' });
+    }
+    drawPageThumb(cv, page.strokes, i, w, img && { img, rect: b.rect });
+    if (img) img.close();
+  }
+
+  function drawPageThumb(cv, strokes, i, w, bgOverride) {
     const h = Math.round(w * PAGE_H / PAGE_W), dpr = window.devicePixelRatio || 1;
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
     cv.style.width = w + 'px'; cv.style.height = h + 'px';
     const c = cv.getContext('2d'), s = (w / PAGE_W) * dpr;
     drawPaper(c, s, 0, 0, cv.width, cv.height, i * PAGE_H, { paper: state.settings.paper, lineSpacing: state.settings.lineSpacing, noBreaks: true });
+    const tpl = strokes === page.strokes ? tplOf(currentNote(), i) : null;
+    if (tpl) drawTemplate(c, s, 0, 0, cv.height, tpl, i);
     c.setTransform(s, 0, 0, s, 0, -i * PAGE_H * s);
-    const bg = strokes === page.strokes ? pageBackground(i, false) : null;
+    const bg = bgOverride || (strokes === page.strokes ? pageBackground(i, false) : null);
     if (bg) c.drawImage(bg.img, bg.rect[0], i * PAGE_H + bg.rect[1], bg.rect[2], bg.rect[3]);
     for (const st of strokes) {
       const b = st.bounds || Ink.strokeBounds(st);
@@ -1130,7 +1151,7 @@
       for (const e of entries) {
         if (!e.isIntersecting) continue;
         const i = +e.target.dataset.page;
-        drawPageThumb(e.target.querySelector('canvas'), page.strokes, i, 120);
+        smallThumb(e.target.querySelector('canvas'), i, 120);
         thumbObserver.unobserve(e.target);
       }
     }, { root: box, rootMargin: '300px' });
@@ -1951,35 +1972,80 @@
       b.page += delta;
       if (blob) await Store.set(`bg:${n.id}:${b.page}`, blob);
     }
+    if (n.templates) {
+      const nt = {};
+      for (const [k, v] of Object.entries(n.templates)) nt[+k >= from ? +k + delta : +k] = v;
+      n.templates = nt;
+    }
     n.pages = Math.max(1, pageCount() + delta);
     clearBackgrounds();
   }
-  async function pageMenu(i, anchor) {
+  // nach Seitenänderungen: Rückgängig passt nicht mehr, Ansichten neu
+  async function pagesChanged(goto) {
+    await saveNow(); state.undo = []; state.redo = [];
+    if (!$('pageSide').hidden) renderPageThumbs();
+    if (!$('gridModal').hidden) openGrid(true);
+    if (goto != null) goToPage(goto); else page.render();
+  }
+  async function insertPageAt(i) {
+    await saveNow();
     const n = currentNote();
+    if (i < pageCount()) await shiftPages(i, 1); else n.pages = pageCount() + 1;
+    await pagesChanged(Math.min(i, pageCount() - 1));
+    showStatus(`Neue Seite ${i + 1}`, 1500);
+  }
+  async function duplicatePage(i) {
+    const n = currentNote();
+    await saveNow();
+    await shiftPages(i + 1, 1);
+    const copies = page.strokes.filter((s) => pageOf(s.bounds.y0) === i).map((s) => ({ ...s, id: uid(), pts: s.pts.map((q) => [q[0], q[1] + PAGE_H, q[2]]) }));
+    copies.forEach((s) => { s.bounds = Ink.strokeBounds(s); });
+    page.strokes.push(...copies);
+    const bg = (n.backgrounds || []).find((b) => b.page === i);
+    if (bg) { await Store.set(`bg:${n.id}:${i + 1}`, await Store.get(`bg:${n.id}:${i}`)); n.backgrounds.push({ page: i + 1, rect: bg.rect.slice() }); }
+    if (n.templates && n.templates[i]) { n.templates[i + 1] = { ...n.templates[i] }; }
+  }
+  // Seiten löschen (Liste von Seitennummern), mit Nachfrage
+  async function deletePages(list) {
+    const n = currentNote();
+    list = [...new Set(list)].sort((a, b) => b - a);
+    if (list.length >= pageCount()) return showStatus('Mindestens eine Seite muss bleiben', 2000), false;
+    if (!confirm(list.length === 1 ? `Seite ${list[0] + 1} mit allem darauf löschen? Das lässt sich nicht rückgängig machen.`
+      : `${list.length} Seiten mit allem darauf löschen? Das lässt sich nicht rückgängig machen.`)) return false;
+    await saveNow();
+    for (const i of list) {
+      page.strokes = page.strokes.filter((s) => pageOf(s.bounds.y0) !== i);
+      const bg = (n.backgrounds || []).find((b) => b.page === i);
+      if (bg) { await Store.del(`bg:${n.id}:${i}`); n.backgrounds = n.backgrounds.filter((b) => b !== bg); }
+      if (n.templates) delete n.templates[i];
+      n.pages = Math.max(1, pageCount());
+      await shiftPages(i + 1, -1);
+    }
+    return true;
+  }
+  async function pageMenu(i, anchor) {
     popMenu(anchor, [
-      ['Neue Seite danach', async () => { await saveNow(); await shiftPages(i + 1, 1); await saveNow(); state.undo = []; state.redo = []; renderPageThumbs(); goToPage(i + 1); }],
-      ['Seite duplizieren', async () => {
-        await saveNow();
-        await shiftPages(i + 1, 1);
-        const copies = page.strokes.filter((s) => pageOf(s.bounds.y0) === i).map((s) => ({ ...s, id: uid(), pts: s.pts.map((q) => [q[0], q[1] + PAGE_H, q[2]]) }));
-        copies.forEach((s) => { s.bounds = Ink.strokeBounds(s); });
-        page.strokes.push(...copies);
-        const bg = (n.backgrounds || []).find((b) => b.page === i);
-        if (bg) { await Store.set(`bg:${n.id}:${i + 1}`, await Store.get(`bg:${n.id}:${i}`)); n.backgrounds.push({ page: i + 1, rect: bg.rect.slice() }); }
-        await saveNow(); state.undo = []; state.redo = []; renderPageThumbs(); goToPage(i + 1);
-      }],
-      ['Seite löschen', async () => {
-        if (pageCount() <= 1) return showStatus('Die einzige Seite kann nicht gelöscht werden', 2000);
-        if (!confirm(`Seite ${i + 1} mit allem darauf löschen? Das lässt sich nicht rückgängig machen.`)) return;
-        await saveNow();
-        page.strokes = page.strokes.filter((s) => pageOf(s.bounds.y0) !== i);
-        const bg = (n.backgrounds || []).find((b) => b.page === i);
-        if (bg) { await Store.del(`bg:${n.id}:${i}`); n.backgrounds = n.backgrounds.filter((b) => b !== bg); }
-        n.pages = Math.max(1, pageCount());
-        await shiftPages(i + 1, -1);
-        n.pages = Math.max(1, (n.pages || 1));
-        await saveNow(); state.undo = []; state.redo = []; renderPageThumbs(); page.render();
-      }, 'danger'],
+      ['Neue Seite davor', () => insertPageAt(i)],
+      ['Neue Seite danach', () => insertPageAt(i + 1)],
+      ['Seite duplizieren', async () => { await duplicatePage(i); await pagesChanged(i + 1); }],
+      ['Als Bild exportieren', () => openExport([i])],
+      ['Seite löschen', async () => { if (await deletePages([i])) await pagesChanged(); }, 'danger'],
+    ]);
+  }
+
+  // Menü „Seite hinzufügen“ wie Notewise: was einfügen und wohin
+  const ADD_POS = [['after', 'Nach der aktuellen Seite'], ['before', 'Vor der aktuellen Seite'], ['first', 'Erste Seite'], ['last', 'Letzte Seite']];
+  const curPage = () => Math.min(pageCount() - 1, pageOf(page.scrollY + page.visibleHeight() / page.zoom / 2));
+  function addPageMenu(anchor) {
+    const pos = state.settings.addPos || 'after';
+    const at = () => ({ after: curPage() + 1, before: curPage(), first: 0, last: pageCount() }[state.settings.addPos || 'after']);
+    const pick = (accept) => { const f = $('insertFile'); f.accept = accept; f.click(); };
+    popMenu(anchor, [
+      ['Neue Seite', () => insertPageAt(at())],
+      ['PDF importieren', () => pick('application/pdf,.pdf')],
+      ['Bilder importieren', () => pick('image/*')],
+      '-',
+      ...ADD_POS.map(([k, l]) => [(pos === k ? '✓ ' : ' ') + l, () => { state.settings.addPos = k; saveSettings(); addPageMenu(anchor); }, pos === k ? 'on' : '']),
     ]);
   }
 
@@ -2105,26 +2171,51 @@
     }, true), 0);
   }
 
-  function openGrid() {
+  // „Alle Seiten“ (wie Notewise): Raster, Antippen springt hin, Auswahlmodus mit Löschen/Duplizieren/Exportieren
+  let gridSel = null, gridIO = null;
+  function openGrid(keepScroll) {
     const box = $('gridPages');
+    const top = keepScroll ? box.scrollTop : 0;
     box.innerHTML = '';
-    const io = new IntersectionObserver((entries) => {
+    if (gridIO) gridIO.disconnect();
+    gridIO = new IntersectionObserver((entries) => {
       for (const e of entries) if (e.isIntersecting) {
-        drawPageThumb(e.target.querySelector('canvas'), page.strokes, +e.target.dataset.page, 150);
-        io.unobserve(e.target);
+        const i = +e.target.dataset.page;
+        smallThumb(e.target.querySelector('canvas'), i, 150);
+        gridIO.unobserve(e.target);
       }
-    }, { root: box, rootMargin: '200px' });
-    const n = pageCount(), cur = pageOf(page.scrollY + page.visibleHeight() / page.zoom / 2);
+    }, { root: box, rootMargin: '300px' });
+    const n = pageCount(), cur = curPage();
+    $('gridInfo').textContent = `${n} Seite${n === 1 ? '' : 'n'}`;
+    $('gridBar').hidden = !gridSel;
+    $('gridSelect').classList.toggle('on', !!gridSel);
     for (let i = 0; i < n; i++) {
-      const b = document.createElement('button');
-      b.className = 'pthumb' + (i === cur ? ' active' : '');
+      const b = document.createElement('div');
+      b.className = 'gthumb' + (i === cur ? ' active' : '') + (gridSel && gridSel.has(i) ? ' picked' : '');
       b.dataset.page = i;
-      b.innerHTML = `<canvas></canvas><span>${i + 1}</span>`;
-      b.onclick = () => { $('gridModal').hidden = true; goToPage(i); };
+      b.innerHTML = `<div class="gimg"><canvas></canvas>${gridSel ? '<span class="tick"></span>' : ''}</div><button class="gno">${i + 1} <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>`;
+      b.querySelector('.gimg').onclick = () => {
+        if (gridSel) { gridSel.has(i) ? gridSel.delete(i) : gridSel.add(i); b.classList.toggle('picked', gridSel.has(i)); return; }
+        $('gridModal').hidden = true; goToPage(i);
+      };
+      b.querySelector('.gno').onclick = (e) => { e.stopPropagation(); pageMenu(i, e.currentTarget); };
       box.appendChild(b);
-      io.observe(b);
+      gridIO.observe(b);
     }
     $('gridModal').hidden = false;
+    if (keepScroll) box.scrollTop = top;
+    else { const a = box.children[cur]; if (a) a.scrollIntoView({ block: 'center' }); }
+  }
+  async function gridAction(act) {
+    const list = gridSel ? [...gridSel].sort((a, b) => a - b) : [];
+    if (act === 'cancel') { gridSel = null; return openGrid(true); }
+    if (!list.length) return showStatus('Erst Seiten antippen, um sie auszuwählen', 2000);
+    if (act === 'del') { if (await deletePages(list)) { gridSel = null; await pagesChanged(); } }
+    if (act === 'dup') {
+      for (const i of [...list].reverse()) await duplicatePage(i);
+      gridSel = null; await pagesChanged();
+    }
+    if (act === 'exp') { const l = list; gridSel = null; $('gridModal').hidden = true; openExport(l); }
   }
 
   function stickyTap(p) {
@@ -2194,14 +2285,150 @@
     a.play();
   }
 
+  // „Mehr“ (•••) wie Notewise: Kopf mit Vorschau, drei Kacheln, Liste
   function moreMenu(anchor) {
-    popMenu(anchor, [
-      ['Notiz umbenennen', () => $('noteTitle').onclick()],
-      ['✦ Claude fragen', () => $('btnClaude').click()],
-      ['✍ Meine Handschrift', () => $('btnHand').click()],
-      ['Exportieren', () => $('btnExport').click()],
-      ['Einstellungen', () => $('btnSettings').click()],
-    ]);
+    const n = currentNote();
+    if (!n) return;
+    const m = $('moreSheet');
+    if (!m.hidden) { m.hidden = true; return; }
+    $('msTitle').textContent = n.title;
+    const path = folderPath(n.folder).map((f) => f.name).join(' › ');
+    $('msSub').textContent = `${pageCount()} Seite${pageCount() === 1 ? '' : 'n'}${path ? ' · ' + path : ''}`;
+    $('msFav').textContent = n.fav ? 'Favorit ✓' : 'Favoriten';
+    const th = $('msThumb'), c = th.getContext('2d');
+    c.fillStyle = '#fff'; c.fillRect(0, 0, th.width, th.height);
+    if (n.thumb) { const im = new Image(); im.onload = () => c.drawImage(im, 0, 0, th.width, th.width * im.height / im.width); im.src = n.thumb; }
+    m.hidden = false;
+    const r = anchor.getBoundingClientRect();
+    m.style.left = Math.max(8, window.innerWidth - m.offsetWidth - 12) + 'px';
+    m.style.top = r.bottom + 10 + 'px';
+    setTimeout(() => document.addEventListener('pointerdown', function close(e) {
+      if (e.target.closest('#moreSheet') || e.target.closest('#btnMore')) return;
+      m.hidden = true; document.removeEventListener('pointerdown', close, true);
+    }, true), 0);
+  }
+  async function moreAction(k) {
+    $('moreSheet').hidden = true;
+    const n = currentNote();
+    if (!n) return;
+    if (k === 'export') openExport();
+    if (k === 'rename') $('noteTitle').onclick();
+    if (k === 'fav') { n.fav = !n.fav; await saveLibrary(); showStatus(n.fav ? 'Zu Favoriten hinzugefügt' : 'Aus Favoriten entfernt', 1500); }
+    if (k === 'move') pickFolder(`„${n.title}“ verschieben nach`, n.folder, [], async (dest) => { n.folder = dest; await saveLibrary(); showStatus('Verschoben', 1500); });
+    if (k === 'goto') gotoPagePrompt();
+    if (k === 'template') openTemplate();
+    if (k === 'stylus') openStylus();
+    if (k === 'claude') $('btnClaude').click();
+    if (k === 'hand') $('btnHand').click();
+    if (k === 'settings') $('btnSettings').click();
+    if (k === 'details') {
+      const path = folderPath(n.folder).map((f) => f.name).join(' › ') || 'Startseite';
+      alert(`${n.title}\n\nOrdner: ${path}\nSeiten: ${pageCount()}\nErstellt: ${new Date(n.created).toLocaleString('de-DE')}\nGeändert: ${new Date(n.updated || n.created).toLocaleString('de-DE')}${n.imported ? '\nAus Notewise übernommen' : ''}`);
+    }
+    if (k === 'delete') {
+      if (!confirm(`„${n.title}“ in den Papierkorb legen?`)) return;
+      await saveNow(); await trashNote(n); await saveLibrary(); state.noteId = null; showLibrary();
+      showStatus(`„${n.title}“ liegt im Papierkorb`, 2500);
+    }
+  }
+
+  // Schnell wechseln: Liste der Notizen links, zuletzt geöffnete zuerst
+  function renderQuick() {
+    const q = $('qpSearch').value.trim().toLowerCase();
+    const list = liveNotes().filter((n) => !q || n.title.toLowerCase().includes(q)).sort((a, b) => (b.opened || 0) - (a.opened || 0));
+    const box = $('qpList');
+    box.innerHTML = '';
+    for (const n of list.slice(0, 80)) {
+      const b = document.createElement('button');
+      b.className = 'qp-item' + (n.id === state.noteId ? ' on' : '');
+      b.innerHTML = `<span class="qt">${n.thumb ? `<img alt="" loading="lazy" src="${n.thumb}">` : ''}</span><span class="qn"><span></span><small></small></span>`;
+      b.querySelector('.qn span').textContent = n.title;
+      b.querySelector('.qn small').textContent = folderPath(n.folder).map((f) => f.name).join(' › ') || fmtWhen(n.opened || n.updated);
+      b.onclick = () => { toggleQuick(false); if (n.id !== state.noteId) openNote(n.id); };
+      box.appendChild(b);
+    }
+  }
+  function toggleQuick(show) {
+    const on = show ?? $('quickPanel').hidden;
+    $('quickPanel').hidden = !on;
+    if (on) { $('qpSearch').value = ''; renderQuick(); }
+  }
+
+  // Vorlage (Papier) je Seite oder für die ganze Notiz
+  const TPL_COLORS = ['#FFFFFF', '#FBF6E9', '#E9D7B5', '#E3EDF6', '#3A3B3E', '#111214'];
+  const TPL_KINDS = [['plain', 'Blanko'], ['lined', 'Liniert'], ['grid', 'Kariert'], ['dots', 'Punktiert']];
+  const defaultTpl = () => ({ kind: { plain: 'plain', lined: 'lined', grid: 'grid', nwgrid: 'grid' }[state.settings.paper] || 'grid', color: '#FFFFFF', density: 5, lineW: 5 });
+  const tplOf = (n, p) => (n && ((n.templates && n.templates[p]) || n.template)) || null;
+  let tplEdit = null;
+  function openTemplate() {
+    const n = currentNote();
+    tplEdit = { ...(tplOf(n, curPage()) || defaultTpl()) };
+    renderTemplate();
+    $('tplModal').hidden = false;
+  }
+  function renderTemplate() {
+    const t = tplEdit;
+    $('tplColors').innerHTML = TPL_COLORS.map((c) => `<button class="tc${c === t.color ? ' on' : ''}" data-c="${c}" style="--c:${c}"></button>`).join('');
+    $('tplColors').querySelectorAll('[data-c]').forEach((b) => { b.onclick = () => { t.color = b.dataset.c; renderTemplate(); }; });
+    $('tplDensity').value = t.density; $('tplDensityV').textContent = t.density;
+    $('tplLineW').value = t.lineW; $('tplLineWV').textContent = t.lineW;
+    const box = $('tplKinds');
+    box.innerHTML = '';
+    for (const [k, l] of TPL_KINDS) {
+      const d = document.createElement('button');
+      d.className = 'tk' + (t.kind === k ? ' on' : '');
+      d.innerHTML = `<canvas width="120" height="170"></canvas><span>${l}</span>`;
+      const cv = d.querySelector('canvas'), c = cv.getContext('2d');
+      drawTemplate(c, 120 / PAGE_W, 0, 0, 170, { ...t, kind: k }, 0);
+      d.onclick = () => { t.kind = k; renderTemplate(); };
+      box.appendChild(d);
+    }
+  }
+  async function applyTemplate(all) {
+    const n = currentNote();
+    if (all) { n.template = { ...tplEdit }; delete n.templates; }
+    else { n.templates = n.templates || {}; n.templates[curPage()] = { ...tplEdit }; }
+    $('tplModal').hidden = true;
+    await saveLibrary();
+    await saveNow();
+    page.render();
+  }
+  // eine Seite (ab Bildschirm-y top, s = Maßstab) mit Vorlage zeichnen; sx = waagerechter Versatz in Einheiten
+  function drawTemplate(ctx, s, sx, top, hPx, t, p) {
+    const x0 = -sx * s, w = PAGE_W * s;
+    const y0 = top, y1 = top + PAGE_H * s;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0, Math.max(0, y0), w, Math.min(hPx, y1) - Math.max(0, y0)); ctx.clip();
+    ctx.fillStyle = t.color; ctx.fillRect(x0, y0, w, PAGE_H * s);
+    const dark = ['#3A3B3E', '#111214'].includes(t.color);
+    const step = GRID * Math.pow(1.17, 5 - t.density);
+    const lw = Math.max(0.6, s * (0.35 + t.lineW * 0.16));
+    ctx.strokeStyle = dark ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.16)';
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.lineWidth = lw;
+    const off = GRID_OFF % step;
+    if (t.kind === 'lined' || t.kind === 'grid') {
+      ctx.beginPath();
+      for (let y = (t.kind === 'lined' ? TOP : off); y < PAGE_H; y += step) {
+        const Y = y0 + y * s; if (Y < -2 || Y > hPx + 2) continue;
+        ctx.moveTo(x0, Y); ctx.lineTo(x0 + w, Y);
+      }
+      if (t.kind === 'grid') for (let x = off; x <= PAGE_W; x += step) { ctx.moveTo(x0 + x * s, Math.max(0, y0)); ctx.lineTo(x0 + x * s, Math.min(hPx, y1)); }
+      ctx.stroke();
+    } else if (t.kind === 'dots') {
+      const r = Math.max(0.8, lw * 1.1);
+      for (let y = off; y < PAGE_H; y += step) {
+        const Y = y0 + y * s; if (Y < -2 || Y > hPx + 2) continue;
+        for (let x = off; x <= PAGE_W; x += step) { ctx.beginPath(); ctx.arc(x0 + x * s, Y, r, 0, 7); ctx.fill(); }
+      }
+    }
+    ctx.restore();
+  }
+
+  function openStylus() {
+    document.querySelectorAll('#stylusModal input[name=finger]').forEach((r) => { r.checked = r.value === (state.settings.finger ? 'draw' : 'scroll'); });
+    $('stHold').checked = state.settings.holdShape !== false;
+    $('stylusModal').hidden = false;
   }
 
   // ---------------- Rückgängig ----------------
@@ -2521,19 +2748,24 @@
   // Notewise: Seite 3508 × 4960 Einheiten (A4); die App-Seite ist PAGE_W breit, also gleicher Maßstab für
   // x und y. Damit ist die Schrift so groß wie eigene Notewise-Schrift. Lange Notizen → mehrere Seiten.
   const NW_W = 3508, NW_H = 4960;
-  async function exportNotewise() {
+  async function exportNotewise(only) {
     if (!page.strokes.length) { showStatus('Die Notiz ist leer', 1500); return; }
     const k = NW_W / PAGE_W, pageH = PAGE_H;
     const pages = [];
+    const keep = only ? new Set(only) : null;
     for (const s of page.strokes) {
       if (s.type) continue;   // Textfelder und Bilder kennt der Notewise-Export (noch) nicht
       // Seite nach der Mitte des Strichs (eigene Striche können über einen Seitenwechsel reichen)
       const bb = s.bounds || Ink.strokeBounds(s);
-      const i = pageOf((bb.y0 + bb.y1) / 2);
+      let i = pageOf((bb.y0 + bb.y1) / 2);
+      if (keep && !keep.has(i)) continue;
+      const shift = keep ? i - [...keep].sort((a, b) => a - b).indexOf(i) : 0;   // ausgewählte Seiten lückenlos
+      if (shift) { i -= shift; }
+      const dy = shift * pageH;
       while (pages.length <= i) pages.push([]);
       const width = Math.max(1, Math.round((s.width || 2.1) * k * 0.7));
       pages[i].push({
-        pts: s.pts.map((p) => [p[0] * k, (p[1] - i * pageH) * k, p[2] ?? 0.7]),
+        pts: s.pts.map((p) => [p[0] * k, (p[1] - dy - i * pageH) * k, p[2] ?? 0.7]),
         color: s.color || '#000000',
         widths: (p) => +(width * (0.7 + 0.45 * p[2])).toFixed(2),
       });
@@ -2542,6 +2774,143 @@
     const title = (n && n.title) || 'Notiz';
     const blob = Notewise.build(title, pages.map((p) => p));
     await shareFile(new File([blob], title.replace(/[^\wäöüÄÖÜß .-]/g, '') + '.notewise', { type: 'application/octet-stream' }));
+  }
+
+  // ---- Exportieren wie in Notewise: ganze Notiz oder bestimmte Seiten, als PDF, Bild oder Notewise ----
+  const exp = { mode: 'all', pages: new Set(), as: 'pdf' };
+  function openExport(only) {
+    const n = currentNote();
+    if (!n) return;
+    exp.mode = only ? 'some' : 'all';
+    exp.pages = new Set(only || []);
+    if (!only && exp.as === 'png' && pageCount() > 1) exp.as = 'pdf';
+    $('expTitle').textContent = n.title;
+    $('expCount').textContent = `${pageCount()} Seite${pageCount() === 1 ? '' : 'n'}`;
+    renderExport();
+    $('exportModal').hidden = false;
+  }
+  function parseRange(t, max) {
+    const out = new Set();
+    for (const part of t.split(/[,;\s]+/)) {
+      const m = part.match(/^(\d+)(?:-(\d+))?$/);
+      if (!m) continue;
+      const a = +m[1], b = m[2] ? +m[2] : a;
+      for (let i = Math.min(a, b); i <= Math.max(a, b); i++) if (i >= 1 && i <= max) out.add(i - 1);
+    }
+    return out;
+  }
+  function rangeText(set) {
+    const l = [...set].sort((a, b) => a - b), parts = [];
+    for (let i = 0; i < l.length; i++) {
+      let j = i; while (j + 1 < l.length && l[j + 1] === l[j] + 1) j++;
+      parts.push(j > i ? `${l[i] + 1}-${l[j] + 1}` : `${l[i] + 1}`); i = j;
+    }
+    return parts.join(', ');
+  }
+  let expIO = null;
+  function renderExport() {
+    const some = exp.mode === 'some', n = pageCount();
+    document.querySelectorAll('#expMode button').forEach((b) => b.classList.toggle('on', b.dataset.m === exp.mode));
+    $('expSome').hidden = !some;
+    $('expAsPng').hidden = !some;
+    if (!some && exp.as === 'png') exp.as = 'pdf';
+    document.querySelectorAll('#expAs button').forEach((b) => b.classList.toggle('on', b.dataset.as === exp.as));
+    if (some) {
+      const strip = $('expStrip');
+      if (strip.dataset.n !== String(n) || strip.dataset.note !== state.noteId) {
+        strip.innerHTML = '';
+        strip.dataset.n = n; strip.dataset.note = state.noteId;
+        if (expIO) expIO.disconnect();
+        expIO = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) { smallThumb(e.target.querySelector('canvas'), +e.target.dataset.page, 70); expIO.unobserve(e.target); } }, { root: strip, rootMargin: '200px' });
+        for (let i = 0; i < n; i++) {
+          const d = document.createElement('div');
+          d.className = 'ething'; d.dataset.page = i;
+          d.innerHTML = `<canvas></canvas><span class="tick"></span><small>${i + 1}</small>`;
+          d.onclick = () => { exp.pages.has(i) ? exp.pages.delete(i) : exp.pages.add(i); renderExport(); };
+          strip.appendChild(d); expIO.observe(d);
+        }
+        const a = strip.children[[...exp.pages][0] ?? curPage()];
+        if (a) setTimeout(() => a.scrollIntoView({ inline: 'center', block: 'nearest' }), 0);
+      }
+      [...strip.children].forEach((d, i) => d.classList.toggle('picked', exp.pages.has(i)));
+      if (document.activeElement !== $('expRange')) $('expRange').value = rangeText(exp.pages);
+      $('expAll').checked = exp.pages.size === n;
+    }
+    $('expGo').disabled = some && !exp.pages.size;
+  }
+
+  // eine Seite als großes Bild (Papier, Hintergrund in voller Auflösung, Striche)
+  async function pageCanvas(i, px) {
+    const n = currentNote(), dpr = window.devicePixelRatio || 1;
+    const b = (n.backgrounds || []).find((x) => x.page === i);
+    let img = null;
+    if (b) { const blob = await Store.get(`bg:${n.id}:${i}`); if (blob) img = await createImageBitmap(blob); }
+    const cv = document.createElement('canvas');
+    for (const it of page.strokes) if (it.type === 'image' && !imgCache.has(it.key) && pageOf(it.bounds.y0) === i) {
+      const bl = await Store.get('img:' + it.key); if (bl) imgCache.set(it.key, await createImageBitmap(bl));
+    }
+    drawPageThumb(cv, page.strokes, i, px / dpr, img && { img, rect: b.rect });
+    if (img) img.close();
+    return cv;
+  }
+  // kleines PDF aus JPEG-Seiten (A4)
+  function buildPdf(pages) {
+    const enc = new TextEncoder(), parts = [], offs = [];
+    let len = 0;
+    const put = (x) => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); len += b.length; };
+    const obj = (id, body, stream) => {
+      offs[id] = len;
+      put(`${id} 0 obj\n${body}\n`);
+      if (stream) { put('stream\n'); put(stream); put('\nendstream\n'); }
+      put('endobj\n');
+    };
+    put('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+    const N = pages.length, kids = pages.map((_, k) => `${3 + k * 3} 0 R`).join(' ');
+    obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+    obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${N} >>`);
+    pages.forEach((p, k) => {
+      const id = 3 + k * 3, W = 595.28, H = 841.89;
+      const content = enc.encode(`q ${W} 0 0 ${H} 0 0 cm /Im0 Do Q`);
+      obj(id, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /XObject << /Im0 ${id + 2} 0 R >> >> /Contents ${id + 1} 0 R >>`);
+      obj(id + 1, `<< /Length ${content.length} >>`, content);
+      obj(id + 2, `<< /Type /XObject /Subtype /Image /Width ${p.w} /Height ${p.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.bytes.length} >>`, p.bytes);
+    });
+    const xref = len, total = 3 + N * 3;
+    let x = `xref\n0 ${total}\n0000000000 65535 f \n`;
+    for (let id = 1; id < total; id++) x += String(offs[id]).padStart(10, '0') + ' 00000 n \n';
+    put(x + `trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+    return new Blob(parts, { type: 'application/pdf' });
+  }
+  async function runExport() {
+    const n = currentNote();
+    const list = exp.mode === 'all' ? [...Array(pageCount()).keys()] : [...exp.pages].sort((a, b) => a - b);
+    if (!list.length) return;
+    $('exportModal').hidden = true;
+    await saveNow();
+    const base = n.title.replace(/[^\wäöüÄÖÜß .-]/g, '') || 'Notiz';
+    try {
+      if (exp.as === 'nw') return await exportNotewise(exp.mode === 'all' ? null : list);
+      if (exp.as === 'png') {
+        for (const [k, i] of list.entries()) {
+          showStatus(`Bild ${k + 1}/${list.length} …`);
+          const cv = await pageCanvas(i, 1654);
+          const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+          await shareFile(new File([blob], `${base} - Seite ${i + 1}.png`, { type: 'image/png' }));
+        }
+        showStatus('Exportiert', 1500);
+        return;
+      }
+      const pages = [];
+      for (const [k, i] of list.entries()) {
+        showStatus(`PDF: Seite ${k + 1}/${list.length} …`);
+        const cv = await pageCanvas(i, 1654);
+        const blob = await new Promise((r) => cv.toBlob(r, 'image/jpeg', 0.85));
+        pages.push({ bytes: new Uint8Array(await blob.arrayBuffer()), w: cv.width, h: cv.height });
+        cv.width = cv.height = 0;
+      }
+      showStatus('PDF fertig', 1500);
+      await shareFile(new File([buildPdf(pages)], base + '.pdf', { type: 'application/pdf' }));
+    } catch (e) { console.error(e); showStatus('Export fehlgeschlagen: ' + e.message, 5000); }
   }
 
   async function shareFile(file) {
@@ -2617,6 +2986,7 @@
       pages: () => pageCount(),
       onView: (sf) => updatePill(sf),
       background: (i) => pageBackground(i),
+      template: (i) => tplOf(currentNote(), i),
     });
     pad = new Surface($('pad'), {
       settings: () => state.settings,
@@ -2644,10 +3014,20 @@
     }));
     $('btnGrid').onclick = openGrid;
     $('gridClose').onclick = () => { $('gridModal').hidden = true; };
-    $('btnAddPage').onclick = addPage;
-    $('btnSearch').onclick = () => { showLibrary(); setTimeout(() => $('libSearch').focus(), 50); };
-    $('btnRecent').onclick = () => popMenu($('btnRecent'), liveNotes().filter((n) => n.id !== state.noteId)
-      .sort((a, b) => (b.opened || 0) - (a.opened || 0)).slice(0, 8).map((n) => [n.title, () => openNote(n.id)]));
+    $('btnAddPage').onclick = () => addPageMenu($('btnAddPage'));
+    $('btnSearch').onclick = () => { showLibrary(); setTimeout(() => $('libSearchBtn').click(), 50); };
+    $('btnRecent').onclick = () => toggleQuick();
+    $('qpClose').onclick = () => toggleQuick(false);
+    $('qpSearch').oninput = renderQuick;
+    document.querySelectorAll('#moreSheet [data-m]').forEach((b) => { b.onclick = () => moreAction(b.dataset.m); });
+    $('tplDensity').oninput = () => { tplEdit.density = +$('tplDensity').value; renderTemplate(); };
+    $('tplLineW').oninput = () => { tplEdit.lineW = +$('tplLineW').value; renderTemplate(); };
+    $('tplApply').onclick = () => applyTemplate(false);
+    $('tplAll').onclick = () => applyTemplate(true);
+    document.querySelectorAll('#stylusModal input[name=finger]').forEach((r) => { r.onchange = () => {
+      if ((r.value === 'draw') !== !!state.settings.finger) $('btnFinger').click();
+    }; });
+    $('stHold').onchange = () => { state.settings.holdShape = $('stHold').checked; saveSettings(); };
     $('btnFinger').classList.toggle('active', !!state.settings.finger);
     $('btnFinger').onclick = () => {
       state.settings.finger = !state.settings.finger;
@@ -2772,7 +3152,20 @@
     $('libSideToggle').onclick = toggleSide;
     $('libSideOpen').onclick = toggleSide;
     $('pickClose').onclick = () => { $('pickModal').hidden = true; };
-    $('btnExport').onclick = () => { $('exportModal').hidden = false; };
+    $('btnExport').onclick = () => openExport();
+    document.querySelectorAll('#expMode button').forEach((b) => { b.onclick = () => {
+      exp.mode = b.dataset.m;
+      if (exp.mode === 'some' && !exp.pages.size) exp.pages.add(curPage());
+      renderExport();
+    }; });
+    document.querySelectorAll('#expAs button').forEach((b) => { b.onclick = () => { exp.as = b.dataset.as; renderExport(); }; });
+    $('expRange').oninput = () => { exp.pages = parseRange($('expRange').value, pageCount()); renderExport(); };
+    $('expAll').onchange = () => { exp.pages = $('expAll').checked ? new Set(Array.from({ length: pageCount() }, (_, i) => i)) : new Set(); renderExport(); };
+    $('expGo').onclick = runExport;
+    $('gridClose').onclick = () => { gridSel = null; $('gridModal').hidden = true; };
+    $('gridSelect').onclick = () => { gridSel = gridSel ? null : new Set(); openGrid(true); };
+    $('gridAdd').onclick = () => insertPageAt(pageCount());
+    document.querySelectorAll('#gridBar [data-g]').forEach((b) => { b.onclick = () => gridAction(b.dataset.g); });
     $('exportClose').onclick = () => { $('exportModal').hidden = true; };
     $('exportPng').onclick = () => { $('exportModal').hidden = true; exportPNG(); };
     $('exportNotewise').onclick = () => { $('exportModal').hidden = true; exportNotewise(); };
