@@ -435,3 +435,21 @@ body.with-pages #pagePill { left: auto; }
 #pickList .side-item:hover { background: rgba(255,255,255,.07); }
 #pickList .side-item.active { background: #1d3a5f; color: #fff; }
 .sample, #pad, #testCanvas { border-color: #3c3f44; }
+
+/* Stiftleiste: Gruppen für Stift und Radierer */
+.pbgrp { display: flex; align-items: center; gap: 4px; }
+.pbgrp[hidden] { display: none; }
+#penBar .pseg { display: flex; background: rgba(255,255,255,.06); border-radius: 18px; padding: 2px; }
+#penBar .pseg button, #penBar .pchip { border: none; background: none; color: #cfd2d8; font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 16px; cursor: pointer; white-space: nowrap; }
+#penBar .pseg button.on, #penBar .pchip.on { background: #1f4f7d; color: #cfe6ff; }
+#penBar .es i { display: block; width: var(--d); height: var(--d); border-radius: 50%; border: 1.6px solid #d9dbe0; }
+#penBar .es.on i { background: #d9dbe0; }
+/* kein graues Viereck beim Antippen (Chrome auf Android) */
+* { -webkit-tap-highlight-color: transparent; }
+button, label, a, .card, [role=button] { -webkit-touch-callout: none; }
+button:focus:not(:focus-visible) { outline: none; }
+
+/* Textfeld → Handschrift */
+#tbHand { position: fixed; z-index: 30; border: none; border-radius: 16px; padding: 6px 12px; font-size: 13px; background: #1f4f7d; color: #e6f2ff;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35); cursor: pointer; }
+#selMenu button.accent { color: #2f6fe0; font-weight: 600; }

@@ -103,6 +103,7 @@
 
 <!-- Leiste unter der Werkzeugleiste, solange Stift oder Textmarker aktiv ist (wie Notewise) -->
 <div id="penBar" hidden>
+  <div id="pbPen" class="pbgrp">
   <button class="pb" id="pbLine" title="Linientyp: Freihand"><svg viewBox="0 0 24 24"><path d="M4 19c4 0 4-14 8-14s4 14 8 14"/></svg></button>
   <span class="sep"></span>
   <div id="pbWidths"></div>
@@ -111,6 +112,19 @@
   <label class="pb" title="Eigene Farbe"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/></svg><input id="pbCustom" type="color" hidden></label>
   <span class="sep"></span>
   <button class="pb" id="pbSettings" title="Stift-Einstellungen"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
+  </div>
+  <div id="pbEraser" class="pbgrp" hidden>
+    <div class="pseg">
+      <button data-em="whole" title="Berührte Striche ganz löschen">Ganze Striche</button>
+      <button data-em="part" title="Nur die überfahrene Stelle löschen">Teilweise</button>
+    </div>
+    <span class="sep"></span>
+    <button class="pb es" data-es="s" title="Klein"><i style="--d:7px"></i></button>
+    <button class="pb es" data-es="m" title="Mittel"><i style="--d:12px"></i></button>
+    <button class="pb es" data-es="l" title="Groß"><i style="--d:19px"></i></button>
+    <span class="sep"></span>
+    <button class="pchip" id="ebMarker" title="Nur Textmarker radieren, Stiftstriche bleiben">Nur Textmarker</button>
+  </div>
 </div>
 <div id="penSet" class="dpop" hidden>
   <div class="dpop-head"><b>Stift</b><button class="x" data-close>✕</button></div>
@@ -190,6 +204,11 @@
     <div class="dgroup"><div class="dgt">Zwei Finger</div><p class="dhint">Zoomen und Verschieben</p></div>
     <div class="dgroup"><div class="dgt">Stift</div>
       <label class="drow sw">Halten, um Form zu zeichnen <input id="stHold" type="checkbox"><span class="tg"></span></label></div>
+    <div class="dgroup"><div class="dgt">Stiftknöpfe</div>
+      <p class="dhint">Knopf drücken, während der Stift über dem Bildschirm schwebt: wechselt zwischen Stift und Radierer.
+        Knopf gedrückt halten beim Schreiben: radiert, solange er gedrückt ist.</p>
+      <label class="drow sw">Knopf wechselt Stift ↔ Radierer <input id="stPenBtn" type="checkbox"><span class="tg"></span></label>
+      <div class="drow"><button class="tbtn" id="stLearn">Knopf anlernen</button><span id="stLearnInfo" class="dhint"></span></div></div>
   </div>
 </div>
 
@@ -203,9 +222,11 @@
 <div id="status" hidden></div>
 
 <textarea id="tbEditor" hidden spellcheck="true"></textarea>
+<button id="tbHand" hidden>✍ In Handschrift umwandeln</button>
 
 <!-- Menü an der Lasso-Auswahl -->
 <div id="selMenu" hidden>
+  <button data-act="hand" class="accent" hidden>✍ In Handschrift</button>
   <button data-act="cut">Ausschneiden</button>
   <button data-act="copy">Kopieren</button>
   <button data-act="dup">Duplizieren</button>
