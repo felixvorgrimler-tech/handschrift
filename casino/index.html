@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0f212e">
+<title>ZOCK – Spielgeld-Casino</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <button class="logo" data-nav="lobby" aria-label="Startseite">
+      <span class="logo-mark">Z</span><span class="logo-text">ZOCK</span>
+    </button>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <button class="navbtn" data-nav="bets"><span class="ico">📋</span><span class="lbl">Meine Wetten</span></button>
+      <button class="navbtn" id="soundBtn"><span class="ico">🔊</span><span class="lbl">Ton an</span></button>
+    </div>
+  </aside>
+  <div id="main">
+    <header id="top">
+      <button id="menuBtn" class="iconbtn" aria-label="Menü">☰</button>
+      <div class="wallet">
+        <div class="bal"><span id="balance">0,00</span><span class="coin">◈</span></div>
+        <button id="walletBtn" class="btn primary small">Wallet</button>
+      </div>
+      <div class="playmoney">Nur Spielgeld</div>
+    </header>
+    <main id="view"></main>
+  </div>
+</div>
+<div id="modal" class="modal hidden"></div>
+<div id="toasts"></div>
+<script src="app.js"></script>
+<script src="games1.js"></script>
+<script src="games2.js"></script>
+<script src="games3.js"></script>
+</body>
+</html>

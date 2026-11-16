@@ -107,3 +107,11 @@ python -m http.server 8765
 ## Modell
 
 Gewichte aus [sjvasquez/handwriting-synthesis](https://github.com/sjvasquez/handwriting-synthesis), trainiert auf IAM On-Line Handwriting. `tools/export_weights.py` liest den TF-Checkpoint ohne TensorFlow und schreibt `model/weights.bin` (float16, 7 MB). Das Original-Repo hat keine Lizenz: nur für den privaten Gebrauch.
+
+## ZOCK – Spielgeld-Casino (`casino/`)
+
+Eigene kleine Web-App im Ordner `casino/` (unabhängig von der Notiz-App): Dice, Limbo, Mines, HiLo, Plinko, Crash,
+Roulette und Blackjack mit **reinem Spielgeld** – keine Einzahlung, keine Auszahlung, kein Server. Guthaben und Statistik
+liegen im Browser (localStorage). Die Gewinnchancen entsprechen echten Casinos: 1 % Hausvorteil bei Dice, Limbo, Mines,
+HiLo, Plinko und Crash, europäisches Roulette mit einer Null (2,7 %), Blackjack 3:2 mit Dealer-Stand auf 17.
+Aufruf: `casino/index.html` (auf GitHub Pages `…/handschrift/casino/`), als App installierbar und offline nutzbar.
