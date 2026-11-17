@@ -485,3 +485,7 @@ body.with-claude #stage { right: 0; }
 #claudePanel textarea { background: #1a1b1e; color: #e9ebef; border: 1px solid #3c3e43; border-radius: 12px; padding: 8px 10px; font-size: 14px; resize: none; }
 #claudePanel textarea::placeholder { color: #777b83; }
 #claudePanel #claudeSend { align-self: flex-end; background: #1f4f7d; color: #e6f2ff; border: none; border-radius: 14px; padding: 6px 14px; }
+
+/* Sicherung */
+#bkClient { width: 100%; margin-top: 6px; font-size: 13px; }
+.model-box .btn[disabled] { opacity: .45; pointer-events: none; }

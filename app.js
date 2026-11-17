@@ -46,7 +46,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-16e';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-16f';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -1356,7 +1356,7 @@
     saveTimer = setTimeout(saveNow, 600);
   }
   async function saveNow() {
-    clearTimeout(saveTimer);
+    clearTimeout(saveTimer); saveTimer = null;
     const n = currentNote();
     if (!n) return;
     const strokes = page.strokes.map(({ bounds, hidden, ...s }) => s);
@@ -3346,6 +3346,15 @@
       Array.from({ length: 13 }, (_, i) => `<option value="${i}">Vorlage ${i + 1}</option>`).join('');
     sel.value = state.settings.style;
   }
+  function renderBackupInfo() {
+    const b = Backup.state();
+    $('bkAuto').checked = b.auto !== false;
+    $('bkClient').value = b.clientId || '';
+    const ready = Backup.hasClient();
+    $('bkNow').disabled = $('bkRestore').disabled = !ready;
+    $('bkInfo').textContent = !ready ? 'Noch nicht eingerichtet: Es fehlt die Google-Client-ID (unten eintragen).'
+      : b.last ? 'Letzte Sicherung: ' + fmtWhen(b.last) : 'Noch nie gesichert. Einmal „Jetzt sichern“ tippen, danach läuft es automatisch.';
+  }
   async function saveSettings() {
     await Store.set('settings', state.settings);
     page.render();
@@ -3630,6 +3639,7 @@
       $('setFinger').checked = state.settings.finger;
       $('setCheck').checked = state.settings.check;
       $('setName').value = state.settings.userName || '';
+      renderBackupInfo();
       Store.get('claudeKey').then((k) => { $('setClaudeKey').placeholder = k ? 'gespeichert (zum Ändern neu eingeben)' : 'sk-ant-…'; });
       fillStyleSelect();
       updateModelInfo();
@@ -3646,6 +3656,21 @@
     };
     $('setLine').onchange = () => { state.settings.lineSpacing = +$('setLine').value; saveSettings(); };
     $('setFinger').onchange = () => { state.settings.finger = $('setFinger').checked; saveSettings(); };
+    // Sicherung in Google Drive
+    Backup.init({ status: showStatus, flush: async () => { if (state.noteId && saveTimer) await saveNow(); } }).then(renderBackupInfo);
+    $('bkNow').onclick = async () => {
+      try { await Backup.run(true); } catch (e) { console.error(e); showStatus('Sicherung fehlgeschlagen: ' + e.message, 6000); }
+      renderBackupInfo();
+    };
+    $('bkRestore').onclick = async () => {
+      try {
+        const r = await Backup.restore();
+        if (r && r.restored) { await loadLibrary(); if (!$('library').hidden) renderLibrary(); }
+      } catch (e) { console.error(e); showStatus('Wiederherstellen fehlgeschlagen: ' + e.message, 6000); }
+      renderBackupInfo();
+    };
+    $('bkAuto').onchange = () => Backup.configure({ auto: $('bkAuto').checked });
+    $('bkClient').onchange = () => Backup.configure({ clientId: $('bkClient').value.trim() }).then(renderBackupInfo);
     $('setName').onchange = () => { state.settings.userName = $('setName').value.trim(); saveSettings(); if (!$('library').hidden) renderLibrary(); };
     $('setCheck').onchange = async () => {
       state.settings.check = $('setCheck').checked;

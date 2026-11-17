@@ -377,6 +377,18 @@
       <input id="setClaudeKey" type="password" autocomplete="off" placeholder="sk-ant-…">
     </div>
     <div class="model-box">
+      <b>Sicherung in Google Drive</b>
+      <p class="hint small">Sichert alle Notizen in den Ordner „Handschrift-Backup“ in deinem Google Drive. Die App sieht dort nur ihre eigenen Dateien.</p>
+      <p id="bkInfo" class="hint small"></p>
+      <div class="row">
+        <button id="bkNow" class="btn primary">Jetzt sichern</button>
+        <button id="bkRestore" class="btn">Aus Drive wiederherstellen</button>
+      </div>
+      <label class="check"><input id="bkAuto" type="checkbox"> Automatisch einmal am Tag sichern, wenn WLAN da ist</label>
+      <details class="hint small"><summary>Google-Client-ID</summary>
+        <input id="bkClient" type="text" autocomplete="off" spellcheck="false" placeholder="….apps.googleusercontent.com"></details>
+    </div>
+    <div class="model-box">
       <b>KI-Modell</b>
       <p id="modelInfo" class="hint small"></p>
       <p id="speedInfo" class="hint small"></p>
@@ -395,6 +407,7 @@
 <script src="ink.js"></script>
 <script src="ocr.js"></script>
 <script src="notewise.js"></script>
+<script src="backup.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
