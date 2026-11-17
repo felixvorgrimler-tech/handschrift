@@ -3,7 +3,7 @@
 // Zugriff nur auf Dateien, die diese App selbst angelegt hat (Berechtigung drive.file).
 (function (global) {
   'use strict';
-  const DEFAULT_CLIENT_ID = '';   // Google-OAuth-Client-ID (öffentlich, kein Geheimnis); sonst die aus den Einstellungen
+  const DEFAULT_CLIENT_ID = '745193282893-umard5hsiik77civ65mo8vsmo4d0rnjd.apps.googleusercontent.com';   // Google-OAuth-Client-ID (öffentlich, kein Geheimnis); sonst die aus den Einstellungen
   const SCOPE = 'https://www.googleapis.com/auth/drive.file';
   const FOLDER = 'Handschrift-Backup';
   const DAY = 20 * 3600 * 1000;   // „täglich“: frühestens nach 20 Stunden wieder
