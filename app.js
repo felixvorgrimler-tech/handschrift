@@ -46,7 +46,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-19e';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-19f';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -1502,9 +1502,13 @@
     if (!$('pageSide').hidden) renderPageThumbs();
   }
 
+  const GRID_TPL = () => ({ kind: 'grid', color: '#FFFFFF', density: 5, lineW: 5 });
   async function addPage() {
     const n = currentNote();
     n.pages = pageCount() + 1;
+    // neue Seiten sind immer kariert mit weißem Papier, auch in alten Notizen mit anderer Vorlage
+    const t = tplOf(n, n.pages - 1);
+    if (!t || t.kind !== 'grid' || t.color !== '#FFFFFF') { n.templates = n.templates || {}; n.templates[n.pages - 1] = GRID_TPL(); }
     await saveNow();
     goToPage(n.pages - 1);
     showStatus(`Seite ${n.pages} hinzugefügt`, 1500);
@@ -1844,7 +1848,7 @@
   async function newNote() {
     const folder = lib.folder === 'recent' ? null : lib.folder;
     const n = { id: uid(), title: 'Notiz ' + new Date().toLocaleDateString('de-DE'), folder, created: Date.now(), updated: Date.now(), opened: Date.now(), pages: 1,
-      size: { name: 'A3', landscape: false }, template: { kind: 'grid', color: '#FFFFFF', density: 5, lineW: 5 } };
+      size: { name: 'A3', landscape: false }, template: GRID_TPL() };
     state.notes.push(n);
     await saveLibrary();
     await openNote(n.id);
@@ -2330,6 +2334,8 @@
     await saveNow();
     const n = currentNote();
     if (i < pageCount()) await shiftPages(i, 1); else n.pages = pageCount() + 1;
+    const t = tplOf(n, i);
+    if (!t || t.kind !== 'grid' || t.color !== '#FFFFFF') { n.templates = n.templates || {}; n.templates[i] = GRID_TPL(); }
     await pagesChanged(Math.min(i, pageCount() - 1));
     showStatus(`Neue Seite ${i + 1}`, 1500);
   }
