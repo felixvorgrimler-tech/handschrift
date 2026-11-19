@@ -46,7 +46,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-17a';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-19a';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -647,7 +647,7 @@
       const st = this.settings;
       if (e.pointerType === 'pen') penSeen = true;
       // Stiftknopf gedrückt, während der Stift nur schwebt (kein Druck): Stift ↔ Radierer
-      if (e.pointerType === 'pen' && (e.button === 2 || e.button === 5) && !(e.pressure > 0) && this.opts.onPenButton) {
+      if (e.pointerType === 'pen' && e.button > 0 && !(e.pressure > 0) && this.opts.onPenButton) {
         this.pointers.set(e.pointerId, { id: e.pointerId, type: 'pen', mode: 'none', start: [0, 0], last: [0, 0] });
         this.opts.onPenButton('pointer:' + e.button);
         return;
@@ -719,8 +719,8 @@
         return;
       }
       if (e.pointerType === 'touch' && this.opts.fixedHeight && penSeen && !st.finger) return;
-      const eraserBtn = e.pointerType === 'pen' && ((e.buttons & 32) || (e.buttons & 2));
-      if (tool === 'eraser' || eraserBtn || (e.button === 2)) {
+      const eraserBtn = e.pointerType === 'pen' && this.opts.btnErases && (((e.buttons & 32) && this.opts.btnErases('pointer:5')) || ((e.buttons & 2) && this.opts.btnErases('pointer:2')));
+      if (tool === 'eraser' || eraserBtn || (e.button === 2 && e.pointerType !== 'pen')) {
         info.mode = 'erase';
         this.eraseGesture = { removed: [], added: [] };
         this.eraseAt(p);
@@ -2745,49 +2745,82 @@
   function openStylus() {
     document.querySelectorAll('#stylusModal input[name=finger]').forEach((r) => { r.checked = r.value === (state.settings.finger ? 'draw' : 'scroll'); });
     $('stHold').checked = state.settings.holdShape !== false;
-    $('stPenBtn').checked = state.settings.penBtnSwitch !== false;
     $('stScribble').checked = state.settings.scribbleErase !== false;
-    $('stLearnInfo').textContent = (state.settings.penKeys || []).length ? 'Angelernt: ' + state.settings.penKeys.map((k) => k.replace('key:', '')).join(', ') : '';
+    renderPenBtns();
     $('stylusModal').hidden = false;
   }
 
-  // ---- Stiftknöpfe (Xiaomi Smart Pen u. a.): Stift ↔ Radierer ----
+  // ---- Stiftknöpfe (Xiaomi Smart Pen u. a.): Knopf 1 und Knopf 2 mit eigener Aktion ----
+  const PEN_BTN_ACTS = [
+    ['toggle', 'Stift ↔ Radierer'], ['marker', 'Stift ↔ Textmarker'], ['lasso', 'Stift ↔ Lasso'],
+    ['undo', 'Rückgängig'], ['redo', 'Wiederholen'], ['none', 'Nichts'],
+  ];
+  // Standard: Knopf 1 = Seitenknopf (meldet sich als rechte Maustaste), Knopf 2 = Radiererknopf
+  function penBtns() {
+    const st = state.settings;
+    if (!Array.isArray(st.penBtns)) {
+      const old = st.penBtnSwitch === false ? 'none' : 'toggle';
+      st.penBtns = [{ code: 'pointer:2', act: old }, { code: 'pointer:5', act: old === 'none' ? 'none' : 'undo' }];
+      // früher angelernte Tasten übernehmen
+      (st.penKeys || []).slice(0, 2).forEach((k, i) => { st.penBtns[i].code = k; });
+    }
+    return st.penBtns;
+  }
+  const penBtnAct = (code) => { const b = penBtns().find((q) => q.code === code); return b ? b.act : null; };
+  const codeName = (code) => code === 'pointer:2' ? 'Seitenknopf' : code === 'pointer:5' ? 'Radiererknopf'
+    : code.startsWith('pointer:') ? 'Stiftknopf ' + code.slice(8) : 'Taste ' + code.replace('key:', '');
+  function renderPenBtns() {
+    penBtns().forEach((b, i) => {
+      const sel = $('stBtn' + i);
+      sel.innerHTML = PEN_BTN_ACTS.map(([v, t]) => `<option value="${v}"${v === b.act ? ' selected' : ''}>${t}</option>`).join('');
+      $('stBtnInfo' + i).textContent = 'Erkannt als: ' + codeName(b.code);
+    });
+  }
+  // Stift ↔ anderes Werkzeug: beim zweiten Druck zurück zum Werkzeug davor
+  function toggleTool(tool) {
+    if (state.tool === tool) setTool(state.toolBefore && state.toolBefore !== tool ? state.toolBefore : state.lastPen);
+    else { state.toolBefore = state.tool; setTool(tool); }
+  }
   let penBtnLast = 0, learnPenBtn = null;
   function penButton(code) {
     if (learnPenBtn) { learnPenBtn(code); return true; }
-    const st = state.settings;
-    const known = code.startsWith('pointer:') ? st.penBtnSwitch !== false : (st.penKeys || []).includes(code);
-    if (!known || $('library').hidden === false) return false;
+    const act = penBtnAct(code);
+    if (!act || act === 'none' || $('library').hidden === false) return false;
     const now = performance.now();
     if (now - penBtnLast < 250) return true;   // manche Stifte melden einen Druck doppelt
     penBtnLast = now;
-    if (state.tool === 'eraser') setTool(state.toolBeforeEraser && state.toolBeforeEraser !== 'eraser' ? state.toolBeforeEraser : state.lastPen);
-    else { state.toolBeforeEraser = state.tool; setTool('eraser'); }
-    showStatus(state.tool === 'eraser' ? 'Radierer' : 'Stift', 700);
+    const names = { eraser: 'Radierer', marker: 'Textmarker', lasso: 'Lasso', ball: 'Stift' };
+    if (act === 'toggle') toggleTool('eraser');
+    else if (act === 'marker') toggleTool('marker');
+    else if (act === 'lasso') toggleTool('lasso');
+    else if (act === 'undo') { $('btnUndo').click(); showStatus('Rückgängig', 700); return true; }
+    else if (act === 'redo') { $('btnRedo').click(); showStatus('Wiederholt', 700); return true; }
+    showStatus(names[state.tool] || 'Stift', 700);
     return true;
   }
-  function startLearnPenBtn() {
-    const info = $('stLearnInfo');
-    info.textContent = 'Jetzt den Knopf am Stift drücken …';
-    clearTimeout(startLearnPenBtn.t);
+  function startLearnPenBtn(i) {
+    const info = $('stBtnInfo' + i);
+    info.textContent = 'Jetzt Knopf ' + (i + 1) + ' am Stift drücken …';
+    if (learnPenBtn) learnPenBtn.cancel();
     const finish = (code) => {
-      learnPenBtn = null; clearTimeout(startLearnPenBtn.t);
+      learnPenBtn = null; clearTimeout(finish.t);
       window.removeEventListener('pointerdown', onPtr, true);
       if (!code) { info.textContent = 'Nichts erkannt. Der Knopf sendet nichts an den Browser.'; return; }
-      if (code.startsWith('pointer:')) { state.settings.penBtnSwitch = true; $('stPenBtn').checked = true; info.textContent = 'Erkannt (Stiftknopf). Funktioniert jetzt.'; }
-      else {
-        const keys = new Set(state.settings.penKeys || []); keys.add(code);
-        state.settings.penKeys = [...keys];
-        info.textContent = 'Erkannt: ' + code.replace('key:', 'Taste ') + '. Funktioniert jetzt.';
-      }
+      const list = penBtns();
+      const other = list[1 - i];
+      if (other.code === code) other.code = list[i].code;   // Knöpfe getauscht
+      list[i].code = code;
       saveSettings();
+      renderPenBtns();
+      $('stBtnInfo' + i).textContent = 'Erkannt als: ' + codeName(code) + '. Funktioniert jetzt.';
     };
+    finish.cancel = () => { clearTimeout(finish.t); window.removeEventListener('pointerdown', onPtr, true); learnPenBtn = null; renderPenBtns(); };
     const onPtr = (e) => {
       if (e.pointerType === 'pen' && e.button > 0) { e.preventDefault(); e.stopPropagation(); finish('pointer:' + e.button); }
     };
     window.addEventListener('pointerdown', onPtr, true);
     learnPenBtn = finish;
-    startLearnPenBtn.t = setTimeout(() => finish(null), 10000);
+    finish.t = setTimeout(() => finish(null), 10000);
   }
   window.addEventListener('keydown', (e) => {
     if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName) && !learnPenBtn) return;
@@ -2796,7 +2829,7 @@
       if (['key:Escape'].includes(code)) return;
       e.preventDefault(); learnPenBtn(code); return;
     }
-    if ((state.settings.penKeys || []).includes(code) && penButton(code)) e.preventDefault();
+    if (penBtnAct(code) && penButton(code)) e.preventDefault();
   }, true);
 
   // ---------------- Rückgängig ----------------
@@ -3405,6 +3438,7 @@
       onLassoTap: (p, client) => pasteAt(p, client),
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onPenButton: (code) => penButton(code),
+      btnErases: (code) => penBtnAct(code) === 'toggle',
       onErase: (removed, added) => pushAction(added && added.length ? { type: 'swap', removed, added } : { type: 'remove', strokes: removed }),
       onTap: (p) => (state.tool === 'textbox' ? textboxTap(p) : state.tool === 'sticky' ? stickyTap(p) : state.tool === 'table' ? insertTable(p) : openTextPanel(p)),
       readOnly: () => state.readOnly,
@@ -3453,8 +3487,10 @@
       if ((r.value === 'draw') !== !!state.settings.finger) $('btnFinger').click();
     }; });
     $('stHold').onchange = () => { state.settings.holdShape = $('stHold').checked; saveSettings(); };
-    $('stPenBtn').onchange = () => { state.settings.penBtnSwitch = $('stPenBtn').checked; saveSettings(); };
-    $('stLearn').onclick = startLearnPenBtn;
+    [0, 1].forEach((i) => {
+      $('stBtn' + i).onchange = () => { penBtns()[i].act = $('stBtn' + i).value; saveSettings(); };
+    });
+    document.querySelectorAll('#stylusModal [data-learn]').forEach((b) => { b.onclick = () => startLearnPenBtn(+b.dataset.learn); });
     $('stScribble').onchange = () => { state.settings.scribbleErase = $('stScribble').checked; saveSettings(); };
     $('btnClaudeTop').onclick = () => toggleClaude();
     $('btnFinger').classList.toggle('active', !!state.settings.finger);
