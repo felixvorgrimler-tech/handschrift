@@ -46,7 +46,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-19f';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-19g';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -2548,7 +2548,11 @@
     }
     $('gridModal').hidden = false;
     if (keepScroll) box.scrollTop = top;
-    else { const a = box.children[cur]; if (a) a.scrollIntoView({ block: 'center' }); }
+    else {
+      // zur aktuellen Seite springen (erst nach dem Layout, sonst stimmen die Höhen noch nicht)
+      const jump = () => { const a = box.children[cur]; if (a) box.scrollTop = Math.max(0, a.offsetTop - box.offsetTop - (box.clientHeight - a.offsetHeight) / 2); };
+      jump(); requestAnimationFrame(jump);
+    }
   }
   async function gridAction(act) {
     const list = gridSel ? [...gridSel].sort((a, b) => a - b) : [];
@@ -3523,7 +3527,7 @@
       if ((PEN_TOOLS.includes(b.dataset.tool) || b.dataset.tool === 'eraser') && state.tool === b.dataset.tool) return penPopup(b);
       setTool(b.dataset.tool);
     }));
-    $('btnGrid').onclick = openGrid;
+    $('btnGrid').onclick = () => openGrid(false);
     $('gridClose').onclick = () => { $('gridModal').hidden = true; };
     $('btnAddPage').onclick = () => addPageMenu($('btnAddPage'));
     $('btnSearch').onclick = () => { showLibrary(); setTimeout(() => $('libSearchBtn').click(), 50); };
