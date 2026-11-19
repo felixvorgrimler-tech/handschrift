@@ -499,6 +499,6 @@ body.with-claude #stage { right: 0; }
 /* Pfeil-Leiste: ziehen zum schnellen Scrollen */
 #pageNav { touch-action: none; user-select: none; -webkit-user-select: none; }
 #pageNav.drag { transition: none; background: #1f4f7d; border-color: #1f4f7d; }
-#pageNav:not(.drag) { transition: transform .18s ease; }
+#pageNav { bottom: auto; top: 70px; }
 #pageNav.drag::before { content: attr(data-page); position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%);
   background: rgba(30, 31, 34, .96); color: #fff; border: 1px solid #3c3e43; border-radius: 12px; padding: 5px 10px; font-size: 14px; white-space: nowrap; }

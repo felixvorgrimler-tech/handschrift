@@ -46,7 +46,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-19c';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-19d';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -1369,7 +1369,7 @@
     if (!$('pageSide').hidden) renderPageThumbs();
   }
 
-  let saveTimer = null, viewTimer = null;
+  let saveTimer = null, viewTimer = null, placePageNav = () => {};
   function scheduleSave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 600);
@@ -3453,7 +3453,7 @@
       onLassoTap: (p, client) => pasteAt(p, client),
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onPenButton: (code) => penButton(code),
-      onMoved: () => { clearTimeout(viewTimer); viewTimer = setTimeout(rememberView, 800); },
+      onMoved: () => { placePageNav(); clearTimeout(viewTimer); viewTimer = setTimeout(rememberView, 800); },
       btnErases: (code) => penBtnAct(code) === 'eraser',
       onErase: (removed, added) => pushAction(added && added.length ? { type: 'swap', removed, added } : { type: 'remove', strokes: removed }),
       onTap: (p) => (state.tool === 'textbox' ? textboxTap(p) : state.tool === 'sticky' ? stickyTap(p) : state.tool === 'table' ? insertTable(p) : openTextPanel(p)),
@@ -3530,26 +3530,33 @@
     $('pagePillPg').onclick = gotoPagePrompt;
     $('zoomNo').onclick = () => { const r = page.canvas.getBoundingClientRect(); page.zoomAt(1, r.left + r.width / 2, r.top + r.height / 2); };
     $('btnMic').onclick = toggleMic;
-    // Pfeil-Leiste festhalten und ziehen: scrollt schnell durch die ganze Notiz (wie in Notewise)
+    // Pfeil-Leiste als Schieber (wie in Notewise): steht oben, wenn du oben in der Notiz bist, unten am Ende.
+    // Festhalten und ziehen scrollt schnell durch die ganze Notiz.
     (() => {
       const nav = $('pageNav');
+      const TOP = 70, BOTTOM = 100;   // oben Werkzeugleiste, unten Seitenzahl/Zoom frei lassen
+      const track = () => { const h = nav.offsetHeight || 64; return { y0: TOP, len: Math.max(1, window.innerHeight - BOTTOM - TOP - h) }; };
       let drag = null, suppress = false;
+      placePageNav = () => {
+        if (drag && drag.on) return;
+        const t = track(), max = page.maxScroll();
+        const f = max > 0 ? Math.min(1, Math.max(0, page.scrollY / max)) : 0;
+        nav.style.top = Math.round(t.y0 + f * t.len) + 'px';
+      };
+      window.addEventListener('resize', () => placePageNav());
       nav.addEventListener('pointerdown', (e) => {
         if (e.button > 0) return;
-        drag = { id: e.pointerId, y0: e.clientY, s0: page.scrollY, on: false };
+        drag = { id: e.pointerId, y0: e.clientY, off: e.clientY - nav.getBoundingClientRect().top, on: false };
         nav.setPointerCapture(e.pointerId);
       });
       nav.addEventListener('pointermove', (e) => {
         if (!drag || e.pointerId !== drag.id) return;
-        const dy = e.clientY - drag.y0;
-        if (!drag.on && Math.abs(dy) < 6) return;
-        if (!drag.on) { drag.on = true; nav.classList.add('drag'); const r = nav.getBoundingClientRect(); drag.top = r.top; drag.h = r.height; }
-        // ganze Notiz auf die Bildschirmhöhe verteilt: ein Zug über den Bildschirm = von vorne bis hinten
-        const track = Math.max(200, window.innerHeight - 160);
-        const max = page.maxScroll();
-        page.scrollY = Math.min(max, Math.max(0, drag.s0 + dy * max / track));
-        const ty = Math.min(window.innerHeight - 10 - drag.h, Math.max(70, drag.top + dy)) - drag.top;
-        nav.style.transform = `translateY(${ty}px)`;
+        if (!drag.on && Math.abs(e.clientY - drag.y0) < 6) return;
+        if (!drag.on) { drag.on = true; nav.classList.add('drag'); }
+        const t = track();
+        const top = Math.min(t.y0 + t.len, Math.max(t.y0, e.clientY - drag.off));
+        nav.style.top = top + 'px';
+        page.scrollY = (top - t.y0) / t.len * page.maxScroll();
         page.showBar = performance.now();
         page.render();
         const n = pageCount(), cur = Math.min(n, pageOf(page.scrollY + page.visibleHeight() / page.zoom / 2) + 1);
@@ -3560,7 +3567,6 @@
         if (drag.on) { suppress = true; setTimeout(() => { suppress = false; }, 50); }
         drag = null;
         nav.classList.remove('drag');
-        nav.style.transform = '';
         page.render();
         if (!$('pageSide').hidden) renderPageThumbs();
       };
