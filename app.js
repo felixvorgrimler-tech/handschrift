@@ -46,7 +46,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-19b';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-19c';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -2772,18 +2772,20 @@
 
   // ---- Stiftknöpfe (Xiaomi Smart Pen u. a.): Knopf 1 und Knopf 2 mit eigener Aktion ----
   const PEN_BTN_ACTS = [
-    ['toggle', 'Stift ↔ Radierer'], ['marker', 'Stift ↔ Textmarker'], ['lasso', 'Stift ↔ Lasso'],
+    ['ball', 'Stift'], ['eraser', 'Radierer'], ['marker', 'Textmarker'], ['lasso', 'Lasso'],
     ['undo', 'Rückgängig'], ['redo', 'Wiederholen'], ['none', 'Nichts'],
   ];
+  const PEN_BTN_TOOLS = ['ball', 'eraser', 'marker', 'lasso'];
   // Standard: Knopf 1 = Seitenknopf (meldet sich als rechte Maustaste), Knopf 2 = Radiererknopf
   function penBtns() {
     const st = state.settings;
+    // Standard: Knopf 1 → Stift, Knopf 2 → Radierer (jeder Knopf wählt immer genau ein Werkzeug)
     if (!Array.isArray(st.penBtns)) {
-      const old = st.penBtnSwitch === false ? 'none' : 'toggle';
-      st.penBtns = [{ code: 'pointer:2', act: old }, { code: 'pointer:5', act: old === 'none' ? 'none' : 'undo' }];
-      // früher angelernte Tasten übernehmen
-      (st.penKeys || []).slice(0, 2).forEach((k, i) => { st.penBtns[i].code = k; });
+      st.penBtns = [{ code: 'pointer:2', act: 'ball' }, { code: 'pointer:5', act: 'eraser' }];
+      (st.penKeys || []).slice(0, 2).forEach((k, i) => { st.penBtns[i].code = k; });   // früher angelernte Tasten übernehmen
     }
+    // alte Wechsel-Belegung (Stift ↔ …) auf feste Werkzeuge umstellen
+    if (st.penBtns.some((b) => !PEN_BTN_ACTS.some(([v]) => v === b.act))) { st.penBtns[0].act = 'ball'; st.penBtns[1].act = 'eraser'; }
     return st.penBtns;
   }
   const penBtnAct = (code) => { const b = penBtns().find((q) => q.code === code); return b ? b.act : null; };
@@ -2796,11 +2798,6 @@
       $('stBtnInfo' + i).textContent = 'Erkannt als: ' + codeName(b.code);
     });
   }
-  // Stift ↔ anderes Werkzeug: beim zweiten Druck zurück zum Werkzeug davor
-  function toggleTool(tool) {
-    if (state.tool === tool) setTool(state.toolBefore && state.toolBefore !== tool ? state.toolBefore : state.lastPen);
-    else { state.toolBefore = state.tool; setTool(tool); }
-  }
   let penBtnLast = 0, learnPenBtn = null;
   function penButton(code) {
     if (learnPenBtn) { learnPenBtn(code); return true; }
@@ -2810,9 +2807,7 @@
     if (now - penBtnLast < 250) return true;   // manche Stifte melden einen Druck doppelt
     penBtnLast = now;
     const names = { eraser: 'Radierer', marker: 'Textmarker', lasso: 'Lasso', ball: 'Stift' };
-    if (act === 'toggle') toggleTool('eraser');
-    else if (act === 'marker') toggleTool('marker');
-    else if (act === 'lasso') toggleTool('lasso');
+    if (PEN_BTN_TOOLS.includes(act)) { if (state.tool !== act) setTool(act); }
     else if (act === 'undo') { $('btnUndo').click(); showStatus('Rückgängig', 700); return true; }
     else if (act === 'redo') { $('btnRedo').click(); showStatus('Wiederholt', 700); return true; }
     showStatus(names[state.tool] || 'Stift', 700);
@@ -3459,7 +3454,7 @@
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onPenButton: (code) => penButton(code),
       onMoved: () => { clearTimeout(viewTimer); viewTimer = setTimeout(rememberView, 800); },
-      btnErases: (code) => penBtnAct(code) === 'toggle',
+      btnErases: (code) => penBtnAct(code) === 'eraser',
       onErase: (removed, added) => pushAction(added && added.length ? { type: 'swap', removed, added } : { type: 'remove', strokes: removed }),
       onTap: (p) => (state.tool === 'textbox' ? textboxTap(p) : state.tool === 'sticky' ? stickyTap(p) : state.tool === 'table' ? insertTable(p) : openTextPanel(p)),
       readOnly: () => state.readOnly,
