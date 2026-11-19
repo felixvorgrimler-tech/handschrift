@@ -46,7 +46,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-19d';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-19e';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -393,8 +393,19 @@
       return b;
     }
 
-    scrollBy(dy, dx = 0) {
+    scrollBy(dy, dx = 0, user = true) {
       if (this.opts.fixedHeight) return false;
+      // ganz unten weiter nach unten ziehen: Zug sammeln, ab einem Stück wird eine neue Seite angelegt
+      if (user && this.opts.onPullPage && dy > 0 && this.scrollY >= this.maxScroll() - 0.5) {
+        const now = performance.now();
+        if (now - (this.pullT || 0) > 400) this.pull = 0;   // neuer Zug
+        if (now - (this.pullDone || 0) > 900) {
+          this.pull = (this.pull || 0) + dy * this.zoom;
+          this.pullT = now;
+          if (this.pull > 160) { this.pull = 0; this.pullDone = now; this.opts.onPullPage(); }
+          else { clearTimeout(this.pullTimer); this.pullTimer = setTimeout(() => { this.pull = 0; this.render(true); }, 450); this.scheduleRender(true); }
+        }
+      } else if (dy < 0) this.pull = 0;
       const before = this.scrollY, beforeX = this.scrollX;
       this.scrollY = Math.min(Math.max(0, this.scrollY + dy), Math.max(this.maxScroll(), this.scrollY));
       this.scrollX = this.clampX(this.scrollX + dx);
@@ -474,7 +485,7 @@
       let last = performance.now();
       const stepFn = (now) => {
         const dt = Math.min(40, now - last); last = now;
-        if (!this.scrollBy(v * dt)) return;   // Rand erreicht
+        if (!this.scrollBy(v * dt, 0, false)) return;   // Rand erreicht
         v *= Math.pow(0.996, dt);
         if (Math.abs(v) > 0.02) this.flingRaf = requestAnimationFrame(stepFn);
       };
@@ -550,6 +561,21 @@
         b.beginPath(); b.moveTo(this.marker.x, this.marker.y + 4); b.lineTo(this.marker.x, this.marker.y - st.lineSpacing * 0.75); b.stroke();
         b.fillStyle = 'rgba(47, 95, 208, .08)';
         b.fillRect(this.marker.x, this.marker.y - st.lineSpacing * 0.8, rightEdge() - this.marker.x, st.lineSpacing * 0.85);
+      }
+      // Hinweis beim Weiterziehen am Ende: neue Seite
+      if (this.pull > 0 && performance.now() - this.pullT < 450) {
+        const f = Math.min(1, this.pull / 160), d = this.dpr;
+        const text = f >= 0.99 ? 'Loslassen …' : 'Weiterziehen: neue Seite';
+        b.setTransform(1, 0, 0, 1, 0, 0);
+        b.font = `${14 * d}px system-ui, sans-serif`;
+        const tw = b.measureText(text).width, pw = tw + 64 * d, ph = 34 * d;
+        const x = (this.base.width - pw) / 2, y = this.visibleHeight() * d - ph - 24 * d;
+        b.fillStyle = 'rgba(30, 31, 34, .94)';
+        b.beginPath(); b.roundRect(x, y, pw, ph, ph / 2); b.fill();
+        b.strokeStyle = '#4c8dff'; b.lineWidth = 3 * d;
+        b.beginPath(); b.arc(x + 20 * d, y + ph / 2, 8 * d, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); b.stroke();
+        b.fillStyle = '#fff'; b.textBaseline = 'middle';
+        b.fillText(text, x + 38 * d, y + ph / 2 + d);
       }
       // Scroll-Leiste rechts, kurz nach dem Scrollen sichtbar
       if (!this.opts.fixedHeight && this.showBar && performance.now() - this.showBar < 1200) {
@@ -1507,6 +1533,7 @@
     document.body.classList.remove('in-library');
     $('library').hidden = true;
     page.resize();
+    placePenBar();
   }
 
   const FOLDER_SVG = '<svg viewBox="0 0 64 48" aria-hidden="true"><path d="M4 8a4 4 0 0 1 4-4h16l6 6h26a4 4 0 0 1 4 4v26a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" fill="var(--fc)"/><path d="M4 16h56v24a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z" fill="var(--fc)" opacity=".85"/></svg>';
@@ -1816,7 +1843,8 @@
 
   async function newNote() {
     const folder = lib.folder === 'recent' ? null : lib.folder;
-    const n = { id: uid(), title: 'Notiz ' + new Date().toLocaleDateString('de-DE'), folder, created: Date.now(), updated: Date.now(), opened: Date.now(), pages: 1 };
+    const n = { id: uid(), title: 'Notiz ' + new Date().toLocaleDateString('de-DE'), folder, created: Date.now(), updated: Date.now(), opened: Date.now(), pages: 1,
+      size: { name: 'A3', landscape: false }, template: { kind: 'grid', color: '#FFFFFF', density: 5, lineW: 5 } };
     state.notes.push(n);
     await saveLibrary();
     await openNote(n.id);
@@ -2042,6 +2070,7 @@
     const r = btn ? btn.getBoundingClientRect() : { left: 200, bottom: 60 };
     // linke Kante etwas links vom Stift-Knopf, direkt unter der Werkzeugleiste (wie Notewise)
     const pill = $('pillTools').getBoundingClientRect();
+    if (!pill.height) return;   // Werkzeugleiste gerade unsichtbar (Bibliothek): später beim Öffnen der Notiz
     bar.style.left = Math.round(Math.max(8, Math.min(window.innerWidth - bar.offsetWidth - 8, r.left - 6))) + 'px';
     bar.style.top = Math.round(pill.bottom + 6) + 'px';
   }
@@ -3453,6 +3482,7 @@
       onLassoTap: (p, client) => pasteAt(p, client),
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onPenButton: (code) => penButton(code),
+      onPullPage: () => addPage(),
       onMoved: () => { placePageNav(); clearTimeout(viewTimer); viewTimer = setTimeout(rememberView, 800); },
       btnErases: (code) => penBtnAct(code) === 'eraser',
       onErase: (removed, added) => pushAction(added && added.length ? { type: 'swap', removed, added } : { type: 'remove', strokes: removed }),
