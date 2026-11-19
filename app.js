@@ -22,6 +22,7 @@
   }
   const BOTTOM = 60;          // unterer Rand: keine Linie tiefer als PAGE_H − BOTTOM
   const pageOf = (y) => Math.max(0, Math.floor(y / PAGE_H));
+  const TILE = 512;   // Kachelgröße in Pixeln
   // Notewise-Karo („Alphabet Handwritten Grid“): Kästchen 120 Notewise-Einheiten, erste Linie bei 84
   // (gemessen an einem importierten Export). Eine Kästchenzeile = eine Schreibzeile, wie in deinen Notizen.
   const NW_UNIT = 3508 / PAGE_W;
@@ -46,7 +47,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-19g';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-19h';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -299,7 +300,7 @@
   class Surface {
     constructor(canvas, opts) {
       this.canvas = canvas;
-      this.ctx = canvas.getContext('2d');
+      this.ctx = canvas.getContext('2d', opts.pages ? { alpha: false } : undefined);
       this.opts = opts;
       this.strokes = [];
       this.ghosts = [];
@@ -387,10 +388,24 @@
       return [(e.clientX - r.left) / this.zoom + this.scrollX, (e.clientY - r.top) / this.zoom + this.scrollY];
     }
 
-    contentBottom() {
-      let b = 0;
-      for (const s of this.strokes) b = Math.max(b, s.bounds ? s.bounds.y1 : Ink.strokeBounds(s).y1);
-      return b;
+    contentBottom() { return this.strokeIndex().bottom; }
+
+    // Striche nach Seiten einsortiert (wird nur nach Änderungen neu aufgebaut):
+    // Zeichnen und Suchen sehen nur noch die Striche der betroffenen Seiten statt der ganzen Notiz
+    strokeIndex() {
+      const ix = this.sIdx, list = this.strokes;
+      if (ix && !this.sIdxDirty && ix.ref === list && ix.len === list.length) return ix;
+      const by = new Map();
+      let bottom = 0;
+      for (const st2 of list) {
+        const bb = st2.bounds || (st2.bounds = Ink.strokeBounds(st2));
+        if (!(bb.y1 >= bb.y0)) continue;   // leer
+        if (bb.y1 > bottom) bottom = bb.y1;
+        const p0 = pageOf(bb.y0 - 10), p1 = Math.min(pageOf(bb.y1 + 10), p0 + 2000);
+        for (let p = p0; p <= p1; p++) { let a = by.get(p); if (!a) by.set(p, (a = [])); a.push(st2); }
+      }
+      this.sIdxDirty = false;
+      return (this.sIdx = { ref: list, len: list.length, by, bottom });
     }
 
     scrollBy(dy, dx = 0, user = true) {
@@ -425,56 +440,126 @@
       });
     }
 
-    // ---- Seitenbilder: jede Seite (Vorlage, Hintergrund, Striche) einmal fertig gezeichnet,
-    //      beim Scrollen/Zoomen werden nur noch diese Bilder verschoben ----
-    tileable(s) { return !!(this.opts.pages && this.opts.template) && PAGE_W * PAGE_H * s * s <= 9e6; }
+    // ---- Kacheln: der Inhalt (Vorlage, Hintergrund, Striche) wird in Quadraten zu 512 Pixeln einmal
+    //      fertig gezeichnet, beim Scrollen werden nur noch diese Bilder verschoben. Anders als ganze
+    //      Seitenbilder passen sie auch gezoomt und im Querformat in den Speicher. ----
+    tileable() { return !!(this.opts.pages && this.opts.template); }
     dropTiles(b) {
+      this.sIdxDirty = true;
       if (!this.tiles) return;
       if (!b) { this.tiles.clear(); return; }
-      for (let p = pageOf(b.y0 - 30); p <= pageOf(b.y1 + 30); p++) this.tiles.delete(p);
+      for (const [key, t] of this.tiles) {
+        if (b.x1 + 40 < t.x0 || b.x0 - 40 > t.x0 + t.w || b.y1 + 40 < t.y0 || b.y0 - 40 > t.y0 + t.w) continue;
+        this.tiles.delete(key);
+      }
     }
-    tileClip(c, p, s) {
-      c.setTransform(s, 0, 0, s, 0, -p * PAGE_H * s);
-      c.beginPath(); c.rect(0, p * PAGE_H, PAGE_W, PAGE_H); c.clip();
+    // Inhalt eines Ausschnitts zeichnen (Pixel ab 0,0; sx/sy = linke obere Ecke in Einheiten)
+    drawContent(c, s, sx, sy, W, H) {
+      const top = sy, bottom = sy + H / s;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      if (this.opts.template) {   // Vorlage je Seite (Blanko, Liniert, Kariert, Punktiert, Papierfarbe)
+        for (let p = pageOf(top); p * PAGE_H < bottom; p++) {
+          const t = this.opts.template(p);
+          if (t) drawTemplate(c, s, sx, (p * PAGE_H - sy) * s, H, t, p);
+        }
+      }
+      c.setTransform(s, 0, 0, s, -sx * s, -sy * s);
+      if (this.opts.background) {
+        for (let p = pageOf(top); p * PAGE_H < bottom; p++) {
+          const bg = this.opts.background(p);
+          if (bg) c.drawImage(bg.img, bg.rect[0], p * PAGE_H + bg.rect[1], bg.rect[2], bg.rect[3]);
+        }
+      }
+      this.paintStrokes(c, sx, top, sx + W / s, bottom);
     }
-    buildTile(p, s) {
-      const old = this.tiles.get(p);
-      const W = Math.ceil(PAGE_W * s), H = Math.ceil(PAGE_H * s);
-      const cv = old && old.cv.width === W && old.cv.height === H ? old.cv : document.createElement('canvas');
-      cv.width = W; cv.height = H;
+    // Striche eines Ausschnitts; im Notizbuch je Seite abgeschnitten (nichts ragt auf die Nachbarseite)
+    paintStrokes(c, left, top, right, bottom, only) {
+      const pages = !!this.opts.pages;
+      const p0 = pages ? pageOf(top) : 0, p1 = pages ? pageOf(bottom) : 0;
+      for (let p = p0; p <= p1; p++) {
+        const list = only || (pages ? this.strokeIndex().by.get(p) : this.strokes);
+        if (!list || !list.length) continue;
+        if (pages) { c.save(); c.beginPath(); c.rect(left - 100, p * PAGE_H, right - left + 200, PAGE_H); c.clip(); }
+        for (const st2 of list) {
+          const bb = st2.bounds || (st2.bounds = Ink.strokeBounds(st2));
+          const m = st2.type ? 40 : 10 + (st2.width || 2.2) * 1.5;
+          if (bb.y1 + m < top || bb.y0 - m > bottom || bb.x1 + m < left || bb.x0 - m > right) continue;
+          if (pages && (bb.y1 + m < p * PAGE_H || bb.y0 - m > (p + 1) * PAGE_H)) continue;
+          Ink.drawStroke(c, st2, 1);
+        }
+        if (pages) c.restore();
+      }
+    }
+    tileAt(col, row, s) {
+      const key = s + ':' + col + ':' + row;
+      let t = this.tiles.get(key);
+      if (t) { t.used = performance.now(); return t; }
+      const cv = (this.tilePool && this.tilePool.pop()) || document.createElement('canvas');
+      if (cv.width !== TILE) { cv.width = TILE; cv.height = TILE; }
       const c = cv.getContext('2d');
       c.setTransform(1, 0, 0, 1, 0, 0);
-      const t = this.opts.template(p);
-      if (t) drawTemplate(c, s, 0, 0, H, t, p); else { c.fillStyle = '#fff'; c.fillRect(0, 0, W, H); }
-      c.save();
-      this.tileClip(c, p, s);
-      const bg = this.opts.background && this.opts.background(p);
-      if (bg) c.drawImage(bg.img, bg.rect[0], p * PAGE_H + bg.rect[1], bg.rect[2], bg.rect[3]);
-      const top = p * PAGE_H, bottom = top + PAGE_H;
-      for (const st2 of this.strokes) {
-        const bb = st2.bounds || (st2.bounds = Ink.strokeBounds(st2));
-        if (bb.y1 < top - 10 || bb.y0 > bottom + 10) continue;
-        Ink.drawStroke(c, st2, 1);
-      }
-      c.restore();
-      const tile = { cv, s, used: performance.now() };
-      this.tiles.set(p, tile);
-      // höchstens 5 Seitenbilder behalten (Speicher)
-      if (this.tiles.size > 5) {
-        const far = [...this.tiles.entries()].sort((a, b) => a[1].used - b[1].used)[0];
-        if (far[0] !== p) this.tiles.delete(far[0]);
-      }
-      return tile;
+      c.clearRect(0, 0, TILE, TILE);
+      const x0 = col * TILE / s, y0 = row * TILE / s;
+      this.drawContent(c, s, x0, y0, TILE, TILE);
+      t = { cv, s, x0, y0, w: TILE / s, used: performance.now() };
+      this.tiles.set(key, t);
+      if (this.tiles.size > (this.tileMax || 48)) this.trimTiles();
+      return t;
     }
-    // neuen Strich nur dazumalen statt die Seite neu aufzubauen
+    // am längsten nicht gebrauchte Kacheln abgeben (Speicher)
+    trimTiles() {
+      const max = this.tileMax || 48;
+      const all = [...this.tiles.entries()].sort((a, b) => a[1].used - b[1].used);
+      this.tilePool = this.tilePool || [];
+      for (let i = 0; i < all.length - max; i++) {
+        this.tiles.delete(all[i][0]);
+        if (this.tilePool.length < 8) this.tilePool.push(all[i][1].cv);
+      }
+    }
+    // sichtbare Kachel-Spalten/-Zeilen bei Maßstab ts
+    tileRange(ts) {
+      const s = this.zoom * this.dpr;
+      const vx1 = this.scrollX + this.base.width / s, vy1 = this.scrollY + this.base.height / s;
+      const n = Math.max(this.opts.pages(), 1);
+      return {
+        c0: Math.max(0, Math.floor(this.scrollX * ts / TILE)), c1: Math.min(Math.floor(vx1 * ts / TILE), Math.ceil(PAGE_W * ts / TILE) - 1),
+        r0: Math.max(0, Math.floor(this.scrollY * ts / TILE)), r1: Math.min(Math.floor(vy1 * ts / TILE), Math.ceil(n * PAGE_H * ts / TILE) - 1),
+        rmax: Math.ceil(n * PAGE_H * ts / TILE) - 1,
+      };
+    }
+    // in Pausen die Kacheln knapp über und unter dem Bildschirm vorbereiten: beim Weiterscrollen sind sie schon fertig
+    prefetchTiles() {
+      if (this.prefT || !this.tileable()) return;
+      const idle = window.requestIdleCallback || ((f) => setTimeout(() => f({ timeRemaining: () => 6 }), 40));
+      const run = (dl) => {
+        this.prefT = 0;
+        const s = this.zoom * this.dpr;
+        if (this.tileS !== s || performance.now() - (this.zoomT || 0) < 400 || this.live || this.pointers.size > 1) return;
+        const r = this.tileRange(s), extra = Math.max(1, Math.ceil((r.r1 - r.r0 + 1) / 2));
+        for (let d = 1; d <= extra; d++) {
+          for (const row of [r.r1 + d, r.r0 - d]) {
+            if (row < 0 || row > r.rmax) continue;
+            for (let col = r.c0; col <= r.c1; col++) {
+              if (this.tiles.has(s + ':' + col + ':' + row)) continue;
+              const t = this.tileAt(col, row, s);
+              t.used -= 1000 * d;   // Vorrat zählt weniger als Sichtbares
+              if (dl.timeRemaining() < 3) { this.prefT = idle(run, { timeout: 500 }); return; }
+            }
+          }
+        }
+      };
+      this.prefT = idle(run, { timeout: 500 });
+    }
+    // neuen Strich nur dazumalen statt die Kacheln neu aufzubauen
     addToTiles(st2) {
       if (!this.tiles || !this.tiles.size) return;
       const bb = st2.bounds || (st2.bounds = Ink.strokeBounds(st2));
-      for (let p = pageOf(bb.y0 - 10); p <= pageOf(bb.y1 + 10); p++) {
-        const t = this.tiles.get(p);
-        if (!t) continue;
+      const m = st2.type ? 40 : 10 + (st2.width || 2.2) * 1.5;
+      for (const t of this.tiles.values()) {
+        if (bb.x1 + m < t.x0 || bb.x0 - m > t.x0 + t.w || bb.y1 + m < t.y0 || bb.y0 - m > t.y0 + t.w) continue;
         const c = t.cv.getContext('2d');
-        c.save(); this.tileClip(c, p, t.s); Ink.drawStroke(c, st2, 1); c.restore();
+        c.setTransform(t.s, 0, 0, t.s, -t.x0 * t.s, -t.y0 * t.s);
+        this.paintStrokes(c, t.x0, t.y0, t.x0 + t.w, t.y0 + t.w, [st2]);
       }
     }
 
@@ -496,7 +581,8 @@
     render(keep) {
       if (!this.base.width || !this.base.height) return;
       if (!this.tiles) this.tiles = new Map();
-      if (!keep) this.tiles.clear();
+      if (!keep) { this.tiles.clear(); this.sIdxDirty = true; }
+      this.baseGen = (this.baseGen || 0) + 1;
       const b = this.base.getContext('2d');
       const s = this.zoom * this.dpr;
       const W = this.base.width, Hh = this.base.height;
@@ -507,41 +593,36 @@
         single: this.opts.singleLine, scrollX: this.scrollX, noBreaks: !!this.opts.pages,
       });
       const top = this.scrollY, bottom = this.scrollY + Hh / s;
-      if (this.tileable(s)) {
-        // während des Zoomens alte Bilder gestreckt zeigen, kurz danach scharf neu aufbauen
+      let direct = !this.tileable();
+      if (!direct) {
+        // während des Zoomens die Kacheln des alten Maßstabs gestreckt zeigen, kurz danach scharf neu aufbauen
         const zooming = performance.now() - (this.zoomT || 0) < 200;
-        const n = this.opts.pages();
-        for (let p = Math.max(0, pageOf(top)); p * PAGE_H < bottom && p < Math.max(n, 1); p++) {
-          let t = this.tiles.get(p);
-          if (!t || (t.s !== s && !zooming)) t = this.buildTile(p, s);
-          t.used = performance.now();
+        let ts = zooming && this.tileS ? this.tileS : s;
+        let r = this.tileRange(ts);
+        if (ts !== s && (r.c1 - r.c0 + 1) * (r.r1 - r.r0 + 1) > 90) { ts = s; r = this.tileRange(s); }
+        const count = (r.c1 - r.c0 + 1) * (r.r1 - r.r0 + 1);
+        if (ts === s && count > 90) direct = true;   // sehr weit herausgezoomt: direkt zeichnen
+        else {
+          this.tileMax = Math.max(48, Math.ceil(count * 3) + 6);
+          if (ts === s && this.tileS !== s) {   // neuer Maßstab: alte Kacheln weg
+            for (const [key, t] of this.tiles) if (t.s !== s) this.tiles.delete(key);
+            this.tileS = s;
+          }
           b.setTransform(1, 0, 0, 1, 0, 0);
-          const tx = -this.scrollX * s, ty = (p * PAGE_H - this.scrollY) * s;
-          if (t.s === s) b.drawImage(t.cv, Math.round(tx), Math.round(ty));   // 1:1 auf ganze Pixel: bleibt scharf
-          else b.drawImage(t.cv, tx, ty, PAGE_W * s, PAGE_H * s);
-        }
-        if (zooming) { clearTimeout(this.tileTimer); this.tileTimer = setTimeout(() => this.render(true), 220); }
-        b.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
-      } else {
-      if (this.opts.template) {   // Vorlage je Seite (Blanko, Liniert, Kariert, Punktiert, Papierfarbe)
-        for (let p = pageOf(top); p * PAGE_H < bottom; p++) {
-          const t = this.opts.template(p);
-          if (t) drawTemplate(b, s, this.scrollX, (p * PAGE_H - this.scrollY) * s, Hh, t, p);
+          const ox = Math.round(this.scrollX * s), oy = Math.round(this.scrollY * s);
+          for (let row = r.r0; row <= r.r1; row++) {
+            for (let col = r.c0; col <= r.c1; col++) {
+              const t = this.tileAt(col, row, ts);
+              if (ts === s) b.drawImage(t.cv, col * TILE - ox, row * TILE - oy);   // 1:1 auf ganze Pixel: bleibt scharf
+              else b.drawImage(t.cv, (t.x0 - this.scrollX) * s, (t.y0 - this.scrollY) * s, TILE * s / ts, TILE * s / ts);
+            }
+          }
+          if (zooming) { clearTimeout(this.tileTimer); this.tileTimer = setTimeout(() => this.render(true), 220); }
+          else this.prefetchTiles();
         }
       }
+      if (direct) this.drawContent(b, s, this.scrollX, this.scrollY, W, Hh);
       b.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
-      if (this.opts.background) {
-        for (let p = pageOf(top); p * PAGE_H < bottom; p++) {
-          const bg = this.opts.background(p);
-          if (bg) b.drawImage(bg.img, bg.rect[0], p * PAGE_H + bg.rect[1], bg.rect[2], bg.rect[3]);
-        }
-      }
-      for (const st2 of this.strokes) {
-        const bb = st2.bounds || (st2.bounds = Ink.strokeBounds(st2));
-        if (bb.y1 < top - 10 || bb.y0 > bottom + 10) continue;
-        Ink.drawStroke(b, st2, 1);
-      }
-      }
       // wie Notewise: dunkle Fläche neben und zwischen den Seiten (deckt auch Überstehendes ab)
       if (this.opts.pages) {
         const n = Math.max(this.opts.pages(), 1), gap = 10 / this.zoom, far = 1e5;
@@ -593,14 +674,39 @@
       if (this.opts.onMoved) this.opts.onMoved();
     }
 
-    present() {
+    // Strich, der stückweise gemalt werden darf (ohne Deckkraft, Form oder Lineal und ohne andere Einblendungen)
+    liveIncremental() {
+      const l = this.live;
+      return !!l && !l.type && !(l.alpha != null && l.alpha < 1) && !l.sharp && !l.straight && !l.shaped && !l.tape && !l.blend
+        && !this.eraserAt && !this.ruler && !this.laserLive && !(this.laserTrails && this.laserTrails.length)
+        && !this.lassoPts && !this.sel;
+    }
+    present(liveOnly) {
       const c = this.ctx;
+      const view = this.baseGen + ':' + this.scrollX + ':' + this.scrollY + ':' + this.zoom;
+      if (liveOnly && this.liveDrawn > 1 && this.liveView === view && this.live && this.liveIncremental()) {
+        // nur die neuen Stücke auf das schon sichtbare Bild malen (das Ende folgt mit dem nächsten Punkt)
+        const n = this.live.pts.length;
+        if (n - 1 > this.liveDrawn) {
+          const s = this.zoom * this.dpr;
+          c.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
+          Ink.drawStrokeRange(c, this.live, this.liveDrawn, n - 1);
+          this.liveDrawn = n - 1;
+        }
+        return;
+      }
       c.setTransform(1, 0, 0, 1, 0, 0);
       c.drawImage(this.base, 0, 0);
+      this.liveDrawn = 0;
       if (this.live) {
         const s = this.zoom * this.dpr;
         c.setTransform(s, 0, 0, s, -this.scrollX * s, -this.scrollY * s);
-        Ink.drawStroke(c, this.live, 1);
+        const n = this.live.pts.length;
+        if (n > 2 && this.liveIncremental()) {
+          Ink.drawStrokeRange(c, this.live, 1, n - 1);
+          this.liveDrawn = n - 1;
+          this.liveView = view;
+        } else Ink.drawStroke(c, this.live, 1);
       }
       if (this.eraserAt) {
         const s = this.zoom * this.dpr;
@@ -649,9 +755,10 @@
       }
     }
 
-    schedulePresent() {
-      if (this.raf) return;
-      this.raf = requestAnimationFrame(() => { this.raf = 0; this.present(); });
+    schedulePresent(liveOnly) {
+      if (this.raf) { if (!liveOnly) this.rafFull = true; return; }
+      this.rafFull = !liveOnly;
+      this.raf = requestAnimationFrame(() => { this.raf = 0; this.present(!this.rafFull); });
     }
 
     bind() {
@@ -1000,7 +1107,7 @@
           this.live.pts.push([p[0], p[1], this.livePressure(ev)]);
         }
         if (far) this.armStraighten();
-        this.schedulePresent();
+        this.schedulePresent(true);
       }
     }
 
@@ -1515,12 +1622,17 @@
   }
 
   // Anzeige unten links: Seite x / n und Zoom
+  let pillLast = '';
   function updatePill(sf) {
     const n = pageCount();
     const cur = Math.min(n, pageOf(sf.scrollY + sf.visibleHeight() / sf.zoom / 2) + 1);
+    const z = Math.round(sf.userZoom * 100), side = !$('pageSide').hidden;
+    const key = cur + '/' + n + '/' + z + '/' + side;
+    if (key === pillLast) return;   // nur bei Änderung: jedes Anfassen der Seite kostet Zeit
+    pillLast = key;
     $('pageNo').textContent = cur; $('pageTot').textContent = n;
-    $('zoomNo').textContent = Math.round(sf.userZoom * 100) + '%';
-    if (!$('pageSide').hidden) document.querySelectorAll('.pthumb').forEach((el, i) => el.classList.toggle('active', i === cur - 1));
+    $('zoomNo').textContent = z + '%';
+    if (side) document.querySelectorAll('.pthumb').forEach((el, i) => el.classList.toggle('active', i === cur - 1));
   }
 
   // ---- Ansichten ----
@@ -3575,15 +3687,17 @@
     (() => {
       const nav = $('pageNav');
       const TOP = 70, BOTTOM = 100;   // oben Werkzeugleiste, unten Seitenzahl/Zoom frei lassen
-      const track = () => { const h = nav.offsetHeight || 64; return { y0: TOP, len: Math.max(1, window.innerHeight - BOTTOM - TOP - h) }; };
+      let navH = 0, lastTop = '';
+      const track = () => { if (!navH) navH = nav.offsetHeight; return { y0: TOP, len: Math.max(1, window.innerHeight - BOTTOM - TOP - (navH || 64)) }; };
+      const setTop = (v) => { v = Math.round(v) + 'px'; if (v !== lastTop) { nav.style.top = v; lastTop = v; } };
       let drag = null, suppress = false;
       placePageNav = () => {
         if (drag && drag.on) return;
         const t = track(), max = page.maxScroll();
         const f = max > 0 ? Math.min(1, Math.max(0, page.scrollY / max)) : 0;
-        nav.style.top = Math.round(t.y0 + f * t.len) + 'px';
+        setTop(t.y0 + f * t.len);
       };
-      window.addEventListener('resize', () => placePageNav());
+      window.addEventListener('resize', () => { navH = 0; placePageNav(); });
       nav.addEventListener('pointerdown', (e) => {
         if (e.button > 0) return;
         drag = { id: e.pointerId, y0: e.clientY, off: e.clientY - nav.getBoundingClientRect().top, on: false };
@@ -3595,10 +3709,10 @@
         if (!drag.on) { drag.on = true; nav.classList.add('drag'); }
         const t = track();
         const top = Math.min(t.y0 + t.len, Math.max(t.y0, e.clientY - drag.off));
-        nav.style.top = top + 'px';
+        setTop(top);
         page.scrollY = (top - t.y0) / t.len * page.maxScroll();
         page.showBar = performance.now();
-        page.render();
+        page.render(true);
         const n = pageCount(), cur = Math.min(n, pageOf(page.scrollY + page.visibleHeight() / page.zoom / 2) + 1);
         nav.dataset.page = cur + ' / ' + n;
       });
@@ -3607,7 +3721,7 @@
         if (drag.on) { suppress = true; setTimeout(() => { suppress = false; }, 50); }
         drag = null;
         nav.classList.remove('drag');
-        page.render();
+        page.render(true);
         if (!$('pageSide').hidden) renderPageThumbs();
       };
       nav.addEventListener('pointerup', end);

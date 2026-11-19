@@ -450,19 +450,43 @@
       ctx.fill();
       return;
     }
-    // Segmente mit Breite je nach Druck; Mittelpunkte als Bézier-Glättung
-    let prevMid = [pts[0][0], pts[0][1]];
-    for (let i = 1; i < pts.length; i++) {
+    drawSegs(ctx, pts, base, 1, pts.length, scale);
+  }
+
+  // Segmente from..to-1 mit Breite je nach Druck; Mittelpunkte als Bézier-Glättung.
+  // Aufeinanderfolgende Stücke gleicher (in 16 Stufen gerundeter) Breite gehen in einen Pfad:
+  // viel weniger Zeichenbefehle, sieht gleich aus.
+  const PRESS_STEPS = 16;
+  function drawSegs(ctx, pts, base, from, to, scale = 1) {
+    if (to - from < 1) return;
+    const n = pts.length;
+    let px, py;
+    if (from === 1) { px = pts[0][0]; py = pts[0][1]; }
+    else { px = (pts[from - 2][0] + pts[from - 1][0]) / 2; py = (pts[from - 2][1] + pts[from - 1][1]) / 2; }
+    let curW = -1;
+    for (let i = from; i < to; i++) {
       const p0 = pts[i - 1], p1 = pts[i];
-      const mid = i === pts.length - 1 ? [p1[0], p1[1]] : [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2];
+      const last = i === n - 1;
+      const mx = last ? p1[0] : (p0[0] + p1[0]) / 2, my = last ? p1[1] : (p0[1] + p1[1]) / 2;
       const pr = ((p0[2] ?? 0.5) + (p1[2] ?? 0.5)) / 2;
-      ctx.lineWidth = base * (0.35 + 0.9 * pr);
-      ctx.beginPath();
-      ctx.moveTo(prevMid[0] * scale, prevMid[1] * scale);
-      ctx.quadraticCurveTo(p0[0] * scale, p0[1] * scale, mid[0] * scale, mid[1] * scale);
-      ctx.stroke();
-      prevMid = mid;
+      const wdt = base * (0.35 + 0.9 * Math.round(pr * PRESS_STEPS) / PRESS_STEPS);
+      if (wdt !== curW) {
+        if (curW >= 0) ctx.stroke();
+        ctx.lineWidth = curW = wdt;
+        ctx.beginPath();
+        ctx.moveTo(px * scale, py * scale);
+      }
+      ctx.quadraticCurveTo(p0[0] * scale, p0[1] * scale, mx * scale, my * scale);
+      px = mx; py = my;
     }
+    ctx.stroke();
+  }
+  // Teil eines Strichs zeichnen (für den gerade entstehenden Strich: nur das Neue dazumalen)
+  function drawStrokeRange(ctx, stroke, from, to) {
+    ctx.strokeStyle = stroke.color || '#1b2a4a';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    drawSegs(ctx, stroke.pts, stroke.width || 2.2, from, to, 1);
   }
 
   function strokeBounds(stroke) {
@@ -475,7 +499,7 @@
   }
 
   global.Ink = {
-    toModelText, setAlphabet, hasChar: (c) => ALPHABET.has(c), prepareSample, presetSample, pointsToStrokes, drawStroke, strokeBounds,
+    toModelText, setAlphabet, hasChar: (c) => ALPHABET.has(c), prepareSample, presetSample, pointsToStrokes, drawStroke, drawStrokeRange, strokeBounds,
     offsetsToCoords, resampleStroke, textLines,
   };
 })(typeof self !== 'undefined' ? self : this);
