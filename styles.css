@@ -495,3 +495,10 @@ body.with-claude #stage { right: 0; }
 .pbtn-row b { font-weight: 500; min-width: 62px; }
 .pbtn-row .dsel { flex: 1; min-width: 0; background: #2b2d31; color: #e4e6ea; border: 1px solid #3c3e43; border-radius: 10px; padding: 7px 8px; font: inherit; font-size: 14px; }
 .pbtn-info { margin: 3px 0 0 70px; }
+
+/* Pfeil-Leiste: ziehen zum schnellen Scrollen */
+#pageNav { touch-action: none; user-select: none; -webkit-user-select: none; }
+#pageNav.drag { transition: none; background: #1f4f7d; border-color: #1f4f7d; }
+#pageNav:not(.drag) { transition: transform .18s ease; }
+#pageNav.drag::before { content: attr(data-page); position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%);
+  background: rgba(30, 31, 34, .96); color: #fff; border: 1px solid #3c3e43; border-radius: 12px; padding: 5px 10px; font-size: 14px; white-space: nowrap; }

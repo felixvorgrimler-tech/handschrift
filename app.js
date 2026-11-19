@@ -46,7 +46,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-19a';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-19b';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -564,6 +564,7 @@
       }
       this.present();
       if (this.opts.onView) this.opts.onView(this);
+      if (this.opts.onMoved) this.opts.onMoved();
     }
 
     present() {
@@ -1329,8 +1330,24 @@
     return out;
   }
 
+  // zuletzt gesehene Stelle (Scroll und Zoom) je Notiz
+  function rememberView() {
+    const n = currentNote();
+    if (!n || !$('library').hidden) return;
+    Store.set('view:' + n.id, { y: Math.round(page.scrollY), x: Math.round(page.scrollX), z: +page.userZoom.toFixed(3) });
+  }
+  async function restoreView(id) {
+    const v = await Store.get('view:' + id);
+    if (!v || state.noteId !== id) return;
+    page.userZoom = Math.min(5, Math.max(page.minZoom(), v.z || 1));
+    page.zoom = page.fit * page.userZoom;
+    page.scrollX = page.clampX(v.x || 0);
+    page.scrollY = Math.min(Math.max(0, v.y || 0), page.maxScroll());
+    page.render();
+  }
+
   async function openNote(id) {
-    if (state.noteId) await saveNow();
+    if (state.noteId) { rememberView(); await saveNow(); }
     state.noteId = id;
     const n = noteById(id);
     setPageSize(n.size);
@@ -1345,12 +1362,14 @@
     n.opened = Date.now();
     $('noteTitle').textContent = n.title;
     await Store.set('notes', state.notes);
+    page.userZoom = 1; page.zoom = page.fit;
     showEditor();
     page.render();
+    await restoreView(id);
     if (!$('pageSide').hidden) renderPageThumbs();
   }
 
-  let saveTimer = null;
+  let saveTimer = null, viewTimer = null;
   function scheduleSave() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 600);
@@ -1477,6 +1496,7 @@
   // ---- Ansichten ----
   function showLibrary() {
     if (finishText) finishText();
+    rememberView();
     saveNow();
     document.body.classList.add('in-library');
     $('library').hidden = false;
@@ -3438,6 +3458,7 @@
       onLassoTap: (p, client) => pasteAt(p, client),
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onPenButton: (code) => penButton(code),
+      onMoved: () => { clearTimeout(viewTimer); viewTimer = setTimeout(rememberView, 800); },
       btnErases: (code) => penBtnAct(code) === 'toggle',
       onErase: (removed, added) => pushAction(added && added.length ? { type: 'swap', removed, added } : { type: 'remove', strokes: removed }),
       onTap: (p) => (state.tool === 'textbox' ? textboxTap(p) : state.tool === 'sticky' ? stickyTap(p) : state.tool === 'table' ? insertTable(p) : openTextPanel(p)),
@@ -3514,6 +3535,44 @@
     $('pagePillPg').onclick = gotoPagePrompt;
     $('zoomNo').onclick = () => { const r = page.canvas.getBoundingClientRect(); page.zoomAt(1, r.left + r.width / 2, r.top + r.height / 2); };
     $('btnMic').onclick = toggleMic;
+    // Pfeil-Leiste festhalten und ziehen: scrollt schnell durch die ganze Notiz (wie in Notewise)
+    (() => {
+      const nav = $('pageNav');
+      let drag = null, suppress = false;
+      nav.addEventListener('pointerdown', (e) => {
+        if (e.button > 0) return;
+        drag = { id: e.pointerId, y0: e.clientY, s0: page.scrollY, on: false };
+        nav.setPointerCapture(e.pointerId);
+      });
+      nav.addEventListener('pointermove', (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        const dy = e.clientY - drag.y0;
+        if (!drag.on && Math.abs(dy) < 6) return;
+        if (!drag.on) { drag.on = true; nav.classList.add('drag'); const r = nav.getBoundingClientRect(); drag.top = r.top; drag.h = r.height; }
+        // ganze Notiz auf die Bildschirmhöhe verteilt: ein Zug über den Bildschirm = von vorne bis hinten
+        const track = Math.max(200, window.innerHeight - 160);
+        const max = page.maxScroll();
+        page.scrollY = Math.min(max, Math.max(0, drag.s0 + dy * max / track));
+        const ty = Math.min(window.innerHeight - 10 - drag.h, Math.max(70, drag.top + dy)) - drag.top;
+        nav.style.transform = `translateY(${ty}px)`;
+        page.showBar = performance.now();
+        page.render();
+        const n = pageCount(), cur = Math.min(n, pageOf(page.scrollY + page.visibleHeight() / page.zoom / 2) + 1);
+        nav.dataset.page = cur + ' / ' + n;
+      });
+      const end = (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        if (drag.on) { suppress = true; setTimeout(() => { suppress = false; }, 50); }
+        drag = null;
+        nav.classList.remove('drag');
+        nav.style.transform = '';
+        page.render();
+        if (!$('pageSide').hidden) renderPageThumbs();
+      };
+      nav.addEventListener('pointerup', end);
+      nav.addEventListener('pointercancel', end);
+      nav.addEventListener('click', (e) => { if (suppress) { e.stopPropagation(); e.preventDefault(); } }, true);
+    })();
     $('pagePrev').onclick = () => goToPage(Math.max(0, pageOf(page.scrollY + 5) - (page.scrollY % PAGE_H < 5 ? 1 : 0)));
     $('pageNext').onclick = () => goToPage(Math.min(pageCount() - 1, pageOf(page.scrollY + 5) + 1));
     $('pbEraser').querySelectorAll('[data-em]').forEach((b) => { b.onclick = () => { state.settings.eraserMode = b.dataset.em; saveSettings(); syncPenUi(); }; });
@@ -3735,7 +3794,8 @@
         (e.shiftKey ? $('btnRedo') : $('btnUndo')).click();
       }
     });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { rememberView(); saveNow(); } });
+    window.addEventListener('pagehide', rememberView);
 
     await loadLibrary();
     $('libSort').value = lib.sort;
