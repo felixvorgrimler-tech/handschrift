@@ -47,7 +47,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-19h';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-20a';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -97,18 +97,35 @@
       } catch (e) { /* egal */ }
     }
     // mehrere Einträge in einer Transaktion (Import: schneller und weniger anfällig auf dem Tablet)
-    async function setMany(entries) {
-      const db = await open();
+    async function setMany(entries, dels = []) {
+      let db;
+      try { db = await open(); } catch (e) {   // ohne IndexedDB: nur im Arbeitsspeicher
+        for (const [k, v] of entries) mem.set(k, v);
+        for (const k of dels) mem.delete(k);
+        return;
+      }
       await new Promise((res, rej) => {
         const tx = db.transaction('kv', 'readwrite');
         const os = tx.objectStore('kv');
         for (const [k, v] of entries) os.put(v, k);
+        for (const k of dels) os.delete(k);
         tx.oncomplete = res;
         tx.onerror = () => rej(tx.error);
         tx.onabort = () => rej(tx.error || new Error('Speichern abgebrochen (Speicher voll?)'));
       });
     }
-    return { get, set, del, setMany };
+    async function getMany(keys) {
+      try {
+        const db = await open();
+        return await new Promise((res, rej) => {
+          const tx = db.transaction('kv'), os = tx.objectStore('kv'), out = new Array(keys.length);
+          keys.forEach((k, i) => { const q = os.get(k); q.onsuccess = () => { out[i] = q.result; }; });
+          tx.oncomplete = () => res(out);
+          tx.onerror = () => rej(tx.error);
+        });
+      } catch (e) { return keys.map((k) => mem.get(k)); }
+    }
+    return { get, set, del, setMany, getMany };
   })();
 
   // ---------------- KI-Engine (Web Worker, Rückfall: Hauptthread) ----------------
@@ -1484,8 +1501,9 @@
     state.noteId = id;
     const n = noteById(id);
     setPageSize(n.size);
-    const data = (await Store.get('note:' + id)) || { strokes: [] };
+    const data = await loadNoteStrokes(id);
     page.strokes = data.strokes.map((s) => ({ ...s, bounds: Ink.strokeBounds(s) }));
+    markSaved(id, page.strokes, !data.v2);
     clearBackgrounds();
     claudeHistory = []; $('claudeMsgs').innerHTML = '';   // Gespräch mit Claude gehört zur Notiz
     page.scrollY = 0; page.scrollX = 0;
@@ -1502,6 +1520,60 @@
     if (!$('pageSide').hidden) renderPageThumbs();
   }
 
+  // ---- Notizinhalt seitenweise speichern: nach einem Strich wird nur die geänderte Seite neu geschrieben ----
+  // Format: note:<id> = { v: 2, pages: [0, 3, …] } und notep:<id>:<seite> = Striche, die auf dieser Seite beginnen.
+  // Ältere Notizen ({ strokes: […] }) werden weiter gelesen und beim ersten Speichern umgestellt.
+  const homePage = (s) => { const y = (s.bounds || (s.bounds = Ink.strokeBounds(s))).y0; return Number.isFinite(y) ? pageOf(y) : 0; };
+  async function loadNoteStrokes(id) {
+    const head = await Store.get('note:' + id);
+    if (!head) return { strokes: [], v2: false };
+    if (head.v !== 2) return { strokes: head.strokes || [], v2: false };
+    const parts = await Store.getMany(head.pages.map((p) => 'notep:' + id + ':' + p));
+    return { strokes: [].concat(...parts.map((x) => x || [])), v2: true };
+  }
+  async function deleteNoteStrokes(id) {
+    const head = await Store.get('note:' + id);
+    await Store.setMany([], ['note:' + id].concat(head && head.v === 2 ? head.pages.map((p) => 'notep:' + id + ':' + p) : []));
+  }
+  // zuletzt gespeicherter Stand je Seite, um Geändertes zu erkennen
+  let savedPages = null;   // { id, pages: Map(seite → [Merkmale je Strich]) }
+  const snap = (s) => ({ s, pts: s.pts, n: s.pts ? s.pts.length : 0, b: s.bounds, color: s.color, revealed: s.revealed, text: s.text });
+  const sameSnap = (e, s) => e.s === s && e.pts === s.pts && e.n === (s.pts ? s.pts.length : 0) && e.b === s.bounds
+    && e.color === s.color && e.revealed === s.revealed && e.text === s.text;
+  function bucketByPage(strokes) {
+    const m = new Map();
+    for (const s of strokes) { const p = homePage(s); let a = m.get(p); if (!a) m.set(p, (a = [])); a.push(s); }
+    return m;
+  }
+  function markSaved(id, strokes, old) {
+    const pages = new Map();
+    for (const [p, list] of bucketByPage(strokes)) pages.set(p, list.map(snap));
+    savedPages = { id, pages, old };
+  }
+  // schreibt nur geänderte Seiten; meldet, ob Seite 1 betroffen war (für das Vorschaubild)
+  async function saveNoteStrokes(id, strokes) {
+    const buckets = bucketByPage(strokes);
+    const prev = savedPages && savedPages.id === id && !savedPages.old ? savedPages.pages : null;
+    const puts = [], dels = [], snapNew = new Map();
+    let first = !prev;
+    for (const [p, list] of buckets) {
+      const sn = list.map(snap);
+      snapNew.set(p, sn);
+      const was = prev && prev.get(p);
+      if (was && was.length === list.length && list.every((q, i) => sameSnap(was[i], q))) continue;
+      if (p === 0) first = true;
+      puts.push(['notep:' + id + ':' + p, list.map(({ bounds, hidden, ...q }) => q)]);
+    }
+    puts.push(['note:' + id, { v: 2, pages: [...buckets.keys()].sort((a, b) => a - b) }]);
+    let oldPages;
+    if (prev) oldPages = [...prev.keys()];
+    else { const head = await Store.get('note:' + id); oldPages = head && head.v === 2 ? head.pages : []; }
+    for (const p of oldPages) if (!buckets.has(p)) { dels.push('notep:' + id + ':' + p); if (p === 0) first = true; }
+    await Store.setMany(puts, dels);
+    savedPages = { id, pages: snapNew };
+    return first;
+  }
+
   let saveTimer = null, viewTimer = null, placePageNav = () => {};
   function scheduleSave() {
     clearTimeout(saveTimer);
@@ -1511,12 +1583,11 @@
     clearTimeout(saveTimer); saveTimer = null;
     const n = currentNote();
     if (!n) return;
-    const strokes = page.strokes.map(({ bounds, hidden, ...s }) => s);
-    await Store.set('note:' + n.id, { strokes });
+    const first = await saveNoteStrokes(n.id, page.strokes);
     n.updated = Date.now();
     n.pages = Math.max(n.pages || 1, pageOf(page.contentBottom()) + 1);
     const bg0 = n.backgrounds && n.backgrounds.find((x) => x.page === 0);
-    if (!bg0 || pageBackground(0, false)) n.thumb = makeThumb(page.strokes);
+    if ((first || !n.thumb) && (!bg0 || pageBackground(0, false))) n.thumb = makeThumb(page.strokes);
     await Store.set('notes', state.notes);
   }
 
@@ -1870,7 +1941,8 @@
   // endgültig löschen (aus dem Papierkorb)
   async function purgeNote(n) {
     state.notes = state.notes.filter((x) => x.id !== n.id);
-    await Store.del('note:' + n.id);
+    await deleteNoteStrokes(n.id);
+    await Store.del('view:' + n.id);
     for (const b of n.backgrounds || []) await Store.del(`bg:${n.id}:${b.page}`);
     if (state.noteId === n.id) state.noteId = null;
   }
@@ -1898,7 +1970,8 @@
       }],
       ['Verschieben …', () => pickFolder(`„${n.title}“ verschieben nach`, n.folder, [], async (dest) => { n.folder = dest; await saveLibrary(); renderLibrary(); })],
       ['Duplizieren', async () => {
-        const data = (await Store.get('note:' + n.id)) || { strokes: [] };
+        if (n.id === state.noteId) await saveNow();
+        const data = { strokes: (await loadNoteStrokes(n.id)).strokes };
         const copy = { ...n, id: uid(), title: n.title + ' (Kopie)', created: Date.now(), updated: Date.now() };
         await Store.set('note:' + copy.id, data);
         for (const b of n.backgrounds || []) await Store.set(`bg:${copy.id}:${b.page}`, await Store.get(`bg:${n.id}:${b.page}`));

@@ -108,7 +108,11 @@
 
   // ---- Notiz-Datei: „HSB1“ + Länge + JSON-Kopf (Striche, Liste der Anhänge) + Anhänge hintereinander ----
   async function packNote(id) {
-    const data = (await kvGet('note:' + id)) || { strokes: [] };
+    let data = (await kvGet('note:' + id)) || { strokes: [] };
+    if (data.v === 2) {   // seitenweise gespeichert: wieder zu einer Liste zusammensetzen
+      const parts = await Promise.all(data.pages.map((p) => kvGet('notep:' + id + ':' + p)));
+      data = { strokes: [].concat(...parts.map((x) => x || [])) };
+    }
     const keys = await kvKeys(`bg:${id}:`);
     for (const s of data.strokes) if (s.type === 'image' && s.key && !keys.includes('img:' + s.key)) keys.push('img:' + s.key);
     const parts = [], blobs = [];
