@@ -47,7 +47,7 @@
     'Vielen Dank, das war wirklich sehr nett von dir!',
   ];
 
-  const APP_VERSION = '2026-11-20a';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
+  const APP_VERSION = '2026-11-23a';   // bei jeder Änderung hochzählen (Anzeige in den Einstellungen)
   const $ = (id) => document.getElementById(id);
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -768,6 +768,10 @@
           c.setLineDash([]);
           c.fillStyle = '#fff';
           c.beginPath(); c.arc(b.x1 + pad, b.y1 + pad, 7 / this.zoom, 0, Math.PI * 2); c.fill(); c.stroke();
+          if (this.selText()) {   // Breiten-Griff rechts in der Mitte
+            const gw = 7 / this.zoom, gh = 16 / this.zoom, cy = (b.y0 + b.y1) / 2;
+            c.beginPath(); c.roundRect(b.x1 + pad - gw / 2, cy - gh, gw, 2 * gh, gw / 2); c.fill(); c.stroke();
+          }
         }
       }
     }
@@ -854,6 +858,10 @@
         const sb = this.sel && this.selBounds();
         if (sb && Math.hypot(p[0] - sb.x1, p[1] - sb.y1) < 14 / this.userZoom + 6) {
           info.mode = 'sel-scale'; this.selStart(p); return;
+        }
+        // einzelnes Textfeld: Griff am rechten Rand ändert die Breite (Text bricht neu um)
+        if (sb && this.selText() && Math.abs(p[0] - sb.x1 - 4) < 10 / this.userZoom + 6 && Math.abs(p[1] - (sb.y0 + sb.y1) / 2) < 16 / this.userZoom + 6) {
+          info.mode = 'sel-width'; this.selStart(p); return;
         }
         if (sb && p[0] > sb.x0 - 6 && p[0] < sb.x1 + 6 && p[1] > sb.y0 - 6 && p[1] < sb.y1 + 6) {
           info.mode = 'sel-move'; this.selStart(p); return;
@@ -987,8 +995,24 @@
       this.selBox = this.selBounds();
       this.opts.onSelectionMenu && this.opts.onSelectionMenu(null);
     }
+    // genau ein Textfeld ausgewählt?
+    selText() {
+      if (!this.sel || this.sel.size !== 1) return null;
+      const it = this.strokes.find((s) => this.sel.has(s.id));
+      return it && it.type === 'text' ? it : null;
+    }
     selApply(p, scale) {
       const o = this.selFrom, box = this.selBox;
+      if (scale === 'width') {
+        const it = this.selText(), src = it && this.selOrig.find((q) => q.id === it.id);
+        if (!src) return;
+        it.pts = src.pts.map((q) => q.slice());
+        it.pts[1][0] = Math.min(PAGE_W - 4, Math.max(src.pts[0][0] + it.width * 2, src.pts[1][0] + p[0] - o[0]));
+        if (this.opts.fitText) this.opts.fitText(it);
+        it.bounds = Ink.strokeBounds(it);
+        this.scheduleRender();
+        return;
+      }
       let f = 1, dx = p[0] - o[0], dy = p[1] - o[1];
       if (scale) {
         const w0 = Math.max(4, box.x1 - box.x0), h0 = Math.max(4, box.y1 - box.y0);
@@ -1096,8 +1120,8 @@
         this.schedulePresent();
         return;
       }
-      if (info.mode === 'sel-move' || info.mode === 'sel-scale') {
-        this.selApply(this.toUnits(e), info.mode === 'sel-scale');
+      if (info.mode === 'sel-move' || info.mode === 'sel-scale' || info.mode === 'sel-width') {
+        this.selApply(this.toUnits(e), info.mode === 'sel-width' ? 'width' : info.mode === 'sel-scale');
         return;
       }
       if (info.mode === 'shape' && this.live) {
@@ -1174,7 +1198,7 @@
         }
         return;
       }
-      if (info.mode === 'sel-move' || info.mode === 'sel-scale') {
+      if (info.mode === 'sel-move' || info.mode === 'sel-scale' || info.mode === 'sel-width') {
         const after = this.strokes.filter((s) => this.sel.has(s.id)).map((s) => ({ ...s, pts: s.pts.map((q) => q.slice()) }));
         if (!cancel && this.opts.onReplace) this.opts.onReplace(this.selOrig, after);
         this.selOrig = null;
@@ -2368,63 +2392,103 @@
 
   // offenes Textfeld abschließen (Antippen woanders, Werkzeugwechsel, Bibliothek)
   let finishText = null;
-  document.addEventListener('pointerdown', (e) => { if (finishText && e.target !== $('tbEditor')) finishText(); }, true);
+  const inTextUi = (el) => !!(el && el.closest && el.closest('#tbEditor, #tbBar, .tb-h'));
+  let textUiDown = 0;   // gerade Leiste/Griff angetippt: Textfeld nicht schließen
+  document.addEventListener('pointerdown', (e) => {
+    if (inTextUi(e.target)) { textUiDown = performance.now(); return; }
+    if (finishText) finishText();
+  }, true);
 
   function textboxTap(p) {
     const hit = [...page.strokes].reverse().find((s) => s.type === 'text' && p[0] >= s.pts[0][0] && p[0] <= s.pts[1][0] && p[1] >= s.pts[0][1] && p[1] <= s.pts[1][1]);
     if (hit) return editText(hit, false);
-    const size = Math.round(state.settings.lineSpacing * 0.55);
+    const size = state.settings.textSize || Math.round(state.settings.lineSpacing * 0.55);
+    // neues Feld reicht bis zum rechten Rand: die ganze Zeile steht zur Verfügung (schmaler ziehen geht mit dem Griff)
     const it = { id: uid(), type: 'text', text: '', color: state.pens[state.lastPen].color, width: size,
-      pts: [[p[0], p[1] - size, 0], [Math.min(PAGE_W - 10, p[0] + 360), p[1] + size * 0.6, 0]] };
+      pts: [[p[0], p[1] - size, 0], [Math.min(PAGE_W - 4, Math.max(p[0] + 120, PAGE_W - 40)), p[1] + size * 0.6, 0]] };
     editText(it, true);
   }
 
-  // Bearbeiten über ein Textfeld genau über dem Objekt
+  // Bearbeiten über ein Textfeld genau über dem Objekt, mit Leiste (Schriftgröße, ganze Zeile, Handschrift)
+  // und Griffen wie in Notewise: ✥ verschieben, rechter Rand = Breite (Text bricht neu um), Ecke = alles größer/kleiner
   function editText(it, isNew) {
-    const ta = $('tbEditor');
+    const ta = $('tbEditor'), bar = $('tbBar');
+    const [hMove, hWide, hScale] = ['tbMove', 'tbWide', 'tbScale'].map($);
     const before = isNew ? null : { ...it, pts: it.pts.map((q) => q.slice()) };
     const place = () => {
       const [x, y] = page.toClient(it.pts[0][0], it.pts[0][1]);
+      const wpx = (it.pts[1][0] - it.pts[0][0]) * page.zoom;
       ta.style.left = x + 'px'; ta.style.top = y + 'px';
-      ta.style.width = (it.pts[1][0] - it.pts[0][0]) * page.zoom + 'px';
+      ta.style.width = wpx + 'px';
       ta.style.fontSize = it.width * page.zoom + 'px';
       ta.style.color = it.color;
+      ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px';
+      const hpx = ta.offsetHeight;
+      $('tbSize').textContent = Math.round(it.width);
+      bar.style.left = Math.max(8, Math.min(window.innerWidth - bar.offsetWidth - 8, x)) + 'px';
+      bar.style.top = (y - 52 < 60 ? y + hpx + 14 : y - 52) + 'px';
+      hMove.style.left = (x - 36) + 'px'; hMove.style.top = (y - 4) + 'px';
+      hWide.style.left = (x + wpx - 7) + 'px'; hWide.style.top = (y + Math.max(0, hpx / 2 - 16)) + 'px';
+      hScale.style.left = (x + wpx + 2) + 'px'; hScale.style.top = (y + hpx + 2) + 'px';
     };
+    // Griff ziehen: Verschiebung in Seiteneinheiten an onMove
+    const drag = (el, onMove) => {
+      el.onpointerdown = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        el.setPointerCapture(e.pointerId);
+        const st = { x: e.clientX, y: e.clientY, pts: it.pts.map((q) => q.slice()), w: it.width };
+        el.onpointermove = (m) => { onMove((m.clientX - st.x) / page.zoom, (m.clientY - st.y) / page.zoom, st); place(); };
+        el.onpointerup = el.onpointercancel = () => { el.onpointermove = null; textUiDown = performance.now(); ta.focus(); };
+      };
+    };
+    drag(hMove, (dx, dy, st) => { it.pts = st.pts.map((q) => [q[0] + dx, q[1] + dy, q[2]]); });
+    drag(hWide, (dx, dy, st) => { it.pts[1][0] = Math.min(PAGE_W - 4, Math.max(st.pts[0][0] + it.width * 2, st.pts[1][0] + dx)); });
+    drag(hScale, (dx, dy, st) => {
+      const w0 = st.pts[1][0] - st.pts[0][0];
+      const f = Math.max(0.25, Math.min(6, (w0 + dx) / w0));
+      it.width = Math.max(6, +(st.w * f).toFixed(1));
+      it.pts[1][0] = Math.min(PAGE_W - 4, st.pts[0][0] + w0 * f);
+    });
+    const setSize = (v) => { it.width = Math.max(6, Math.min(200, Math.round(v))); state.settings.textSize = it.width; saveSettings(); place(); ta.focus(); };
+    bar.querySelector('[data-tb="smaller"]').onclick = () => setSize(Math.min(it.width - 1, it.width / 1.15));
+    bar.querySelector('[data-tb="bigger"]').onclick = () => setSize(Math.max(it.width + 1, it.width * 1.15));
+    bar.querySelector('[data-tb="full"]').onclick = () => { it.pts[1][0] = PAGE_W - 40 > it.pts[0][0] + 60 ? PAGE_W - 40 : PAGE_W - 4; place(); ta.focus(); };
     if (!isNew) { it.hidden = true; page.render(); }
     ta.value = it.text;
     ta.hidden = false;
+    bar.hidden = false; hMove.hidden = hWide.hidden = hScale.hidden = false;
     place();
-    const hb = $('tbHand');
-    hb.hidden = false;
-    hb.style.left = ta.style.left;
-    hb.style.top = Math.max(60, parseFloat(ta.style.top) - 40) + 'px';
     // Antippen schließt zuerst das Textfeld (speichert), dann wird umgewandelt
-    hb.onpointerdown = (e) => { e.preventDefault(); if (page.strokes.includes(it) && it.text) textToHand([it]); };
-    const grow = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
-    ta.oninput = grow; grow();
+    $('tbHand').onclick = () => { if (finishText) finishText(); if (page.strokes.includes(it) && it.text) textToHand([it]); };
+    ta.oninput = place;
     setTimeout(() => ta.focus(), 0);
     let done = false;
-    finishText = ta.onblur = () => {
+    const close = () => {
       if (done) return;
       done = true; finishText = null;
       ta.hidden = true; ta.onblur = null;
-      $('tbHand').hidden = true;
+      bar.hidden = true; hMove.hidden = hWide.hidden = hScale.hidden = true;
       delete it.hidden;
       const text = ta.value.replace(/\s+$/, '');
+      const moved = before && (before.width !== it.width || before.pts.some((q, i) => q[0] !== it.pts[i][0] || q[1] !== it.pts[i][1]));
       if (isNew) {
         if (!text) { page.render(); return; }
         it.text = text; fitTextItem(it); it.bounds = Ink.strokeBounds(it);
         page.strokes.push(it);
         pushAction({ type: 'add', strokes: [it] });
       } else if (!text) {
-        page.strokes = page.strokes.filter((s) => s !== it);
+        page.strokes = page.strokes.filter((q) => q !== it);
         pushAction({ type: 'remove', strokes: [before] });
-      } else if (text !== before.text) {
+      } else if (text !== before.text || moved) {
         it.text = text; fitTextItem(it); it.bounds = Ink.strokeBounds(it);
+        page.dropTiles(before.bounds || Ink.strokeBounds(before));
         pushAction({ type: 'replace', before: [before], after: [{ ...it, pts: it.pts.map((q) => q.slice()) }] });
       }
       page.render();
     };
+    finishText = close;
+    // Fokus verloren: schließen, außer es wurde gerade die Leiste oder ein Griff angetippt
+    ta.onblur = () => setTimeout(() => { if (!done && performance.now() - textUiDown > 400 && document.activeElement !== ta) close(); }, 0);
   }
 
   // Bild oder PDF einfügen
@@ -3233,6 +3297,7 @@
     handBusy = true;
     try {
       await withEngine();
+      const check = state.settings.check && await loadOCR();
       const bias = +$('bias').value, samples = activeSamples();
       const removed = [], added = [];
       for (const it of items) {
@@ -3248,7 +3313,7 @@
           page.strokes.push(...st);
           page.render();
           showStatus(`KI schreibt … ${++done} Zeilen`);
-        }, right);
+        }, right, check);
         delete it.hidden;
         page.strokes = page.strokes.filter((q) => q !== it);
         removed.push(it); added.push(...strokes);
@@ -3678,6 +3743,7 @@
       onStroke: (s) => pushAction({ type: 'add', strokes: [s] }),
       onPenButton: (code) => penButton(code),
       onPullPage: () => addPage(),
+      fitText: (it) => fitTextItem(it),
       onMoved: () => { placePageNav(); clearTimeout(viewTimer); viewTimer = setTimeout(rememberView, 800); },
       btnErases: (code) => penBtnAct(code) === 'eraser',
       onErase: (removed, added) => pushAction(added && added.length ? { type: 'swap', removed, added } : { type: 'remove', strokes: removed }),

@@ -231,7 +231,14 @@
 <div id="status" hidden></div>
 
 <textarea id="tbEditor" hidden spellcheck="true"></textarea>
-<button id="tbHand" hidden>✍ In Handschrift umwandeln</button>
+<div id="tbBar" hidden>
+  <button data-tb="smaller" title="Schrift kleiner">A−</button><span id="tbSize"></span><button data-tb="bigger" title="Schrift größer">A+</button>
+  <button data-tb="full" title="Textfeld bis zum rechten Rand">↔ Ganze Zeile</button>
+  <button id="tbHand">✍ In Handschrift</button>
+</div>
+<div id="tbMove" class="tb-h" hidden title="Verschieben">✥</div>
+<div id="tbWide" class="tb-h" hidden title="Breite ziehen"></div>
+<div id="tbScale" class="tb-h" hidden title="Größe ziehen"></div>
 
 <!-- Menü an der Lasso-Auswahl -->
 <div id="selMenu" hidden>
